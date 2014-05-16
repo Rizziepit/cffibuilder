@@ -1,5 +1,5 @@
 
-from . import api, model
+from . import builder, model
 from .commontypes import COMMON_TYPES, resolve_common_type
 try:
     from . import _pycparser as pycparser
@@ -155,7 +155,7 @@ class Parser(object):
             msg = 'cannot parse "%s"\n%s' % (line.strip(), msg)
         else:
             msg = 'parse error\n%s' % (msg,)
-        raise api.CDefError(msg)
+        raise builder.CDefError(msg)
 
     def parse(self, csource, override=False, packed=False):
         prev_override = self._override
@@ -185,7 +185,7 @@ class Parser(object):
                     self._parse_decl(decl)
                 elif isinstance(decl, pycparser.c_ast.Typedef):
                     if not decl.name:
-                        raise api.CDefError("typedef does not declare any name",
+                        raise builder.CDefError("typedef does not declare any name",
                                             decl)
                     if (isinstance(decl.type.type, pycparser.c_ast.IdentifierType)
                             and decl.type.type.names == ['__dotdotdot__']):
@@ -200,8 +200,8 @@ class Parser(object):
                         realtype = self._get_type(decl.type, name=decl.name)
                     self._declare('typedef ' + decl.name, realtype)
                 else:
-                    raise api.CDefError("unrecognized construct", decl)
-        except api.FFIError as e:
+                    raise builder.CDefError("unrecognized construct", decl)
+        except builder.BuilderError as e:
             msg = self._convert_pycparser_error(e, csource)
             if msg:
                 e.args = (e.args[0] + "\n    *** Err: %s" % msg,)
@@ -209,7 +209,7 @@ class Parser(object):
 
     def _add_constants(self, key, val):
         if key in self._int_constants:
-            raise api.FFIError(
+            raise builder.BuilderError(
                 "multiple declarations of constant: %s" % (key,))
         self._int_constants[key] = val
 
@@ -231,7 +231,7 @@ class Parser(object):
             elif value == '...':
                 self._declare('macro ' + key, value)
             else:
-                raise api.CDefError('only supports the syntax "#define '
+                raise builder.CDefError('only supports the syntax "#define '
                                     '%s ..." (literally) or "#define '
                                     '%s 0x1FF" for now' % (key, key))
 
@@ -254,7 +254,7 @@ class Parser(object):
                 if node.values is not None:
                     self._get_struct_union_enum_type('enum', node)
             elif not decl.name:
-                raise api.CDefError("construct does not declare any variable",
+                raise builder.CDefError("construct does not declare any variable",
                                     decl)
             #
             if decl.name:
@@ -269,7 +269,7 @@ class Parser(object):
         assert not macros
         exprnode = ast.ext[-1].type.args.params[0]
         if isinstance(exprnode, pycparser.c_ast.ID):
-            raise api.CDefError("unknown identifier '%s'" % (exprnode.name,))
+            raise builder.CDefError("unknown identifier '%s'" % (exprnode.name,))
         return self._get_type(exprnode.type)
 
     def _declare(self, name, obj):
@@ -277,7 +277,7 @@ class Parser(object):
             if self._declarations[name] is obj:
                 return
             if not self._override:
-                raise api.FFIError(
+                raise builder.BuilderError(
                     "multiple declarations of %s (for interactive usage, "
                     "try cdef(xx, override=True))" % (name,))
         assert '__dotdotdot__' not in name.split()
@@ -344,7 +344,7 @@ class Parser(object):
                 if ident == 'void':
                     return model.void_type
                 if ident == '__dotdotdot__':
-                    raise api.FFIError(':%d: bad usage of "..."' %
+                    raise builder.BuilderError(':%d: bad usage of "..."' %
                             typenode.coord.line)
                 return resolve_common_type(ident)
             #
@@ -372,7 +372,7 @@ class Parser(object):
             return self._get_struct_union_enum_type('union', typenode, name,
                                                     nested=True)
         #
-        raise api.FFIError(":%d: bad or unsupported type declaration" %
+        raise builder.BuilderError(":%d: bad or unsupported type declaration" %
                 typenode.coord.line)
 
     def _parse_function_type(self, typenode, funcname=None):
@@ -386,7 +386,7 @@ class Parser(object):
         if ellipsis:
             params.pop()
             if not params:
-                raise api.CDefError(
+                raise builder.CDefError(
                     "%s: a function with only '(...)' as argument"
                     " is not correct C" % (funcname or 'in expression'))
         elif (len(params) == 1 and
@@ -488,7 +488,7 @@ class Parser(object):
             return tp
         #
         if tp.fldnames is not None:
-            raise api.CDefError("duplicate declaration of struct %s" % name)
+            raise builder.CDefError("duplicate declaration of struct %s" % name)
         fldnames = []
         fldtypes = []
         fldbitsize = []
@@ -525,7 +525,7 @@ class Parser(object):
 
     def _make_partial(self, tp, nested):
         if not isinstance(tp, model.StructOrUnion):
-            raise api.CDefError("%s cannot be partial" % (tp,))
+            raise builder.CDefError("%s cannot be partial" % (tp,))
         if not tp.has_c_name() and not nested:
             raise NotImplementedError("%s is partial but has no C name" %(tp,))
         tp.partial = True
@@ -550,7 +550,7 @@ class Parser(object):
                 self._partial_length = True
                 return '...'
         #
-        raise api.FFIError(":%d: unsupported expression: expected a "
+        raise builder.BuilderError(":%d: unsupported expression: expected a "
                            "simple numeric constant" % exprnode.coord.line)
 
     def _build_enum_type(self, explicit_name, decls):

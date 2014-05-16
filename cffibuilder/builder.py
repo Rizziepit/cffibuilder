@@ -1,6 +1,6 @@
-import os
+import imp, os, shutil, sys
 
-from . import cparser
+from . import ffiplatform
 from .lock import allocate_lock
 
 
@@ -8,9 +8,19 @@ class BuilderError(Exception):
     pass
 
 
+class CDefError(Exception):
+    def __str__(self):
+        try:
+            line = 'line %d: ' % (self.args[1].coord.line,)
+        except (AttributeError, TypeError, IndexError):
+            line = ''
+        return '%s%s' % (line, self.args[0])
+
+
 class Builder(object):
 
     def __init__(self):
+        from . import cparser
         self._lock = allocate_lock()
         self._parser = cparser.Parser()
         self._cdefsources = []
@@ -27,26 +37,90 @@ class Builder(object):
 
     def build(self, modulename, source='', srcdir=None, tmpdir=None, **kwargs):
         if srcdir is None:
-            # TODO: figure out the build dir
-            pass
-        modulepath = os.path.join(srcdir, modulename)
-        with open(modulepath, 'w') as f:
-            self._generate_code(self, modulename, f, source)
-        self._verify(modulepath, tmpdir, **kwargs)
+            srcdir = os.path.join(
+                os.path.abspath(os.path.dirname(sys._getframe(1).f_code.co_filename)),
+                'build/'
+            )
+        _ensure_dir(srcdir)
+        modulename = os.path.splitext(modulename)[0]
+        sourcepath = os.path.join(srcdir, modulename + '.c')
 
-    def _generate_code(self, modulename, sourcefile, source):
+        with self._lock:
+            self._generate_code(modulename, sourcepath, source)
+            self._verify(sourcepath, tmpdir, **kwargs)
+
+    def _generate_code(self, modulename, sourcepath, source):
         from .genengine_cpy import GenCPythonEngine
-        pass
+        engine = GenCPythonEngine(modulename, sourcepath, source, self._parser)
+        engine.write_source_to_f()
 
-    def _verify(self, sourcefile, tmpdir=None, **kwargs):
-        # compiles generated code to verify that it is valid
+    def _verify(self, sourcepath, tmpdir=None, **kwargs):
+        # figure out some file paths
         if tmpdir is None:
-            tmpdir = os.path.join(os.path.dirname(sourcefile), '__pycache__')
-        # TODO: compile to tmpdir
-        # TODO: load library
-        pass
+            tmpdir = os.path.join(os.path.dirname(sourcepath), '__pycache__')
+        _ensure_dir(tmpdir)
+        suffix = _get_so_suffixes()[0]
+        modulepath = os.path.splitext(sourcepath)[0] + suffix
+        modulename = _get_module_name(modulepath)
+        sourcepath = ffiplatform.maybe_relative_path(sourcepath)
+        cdir = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../c/')
+        # update compiler args with libraries and dirs to compile _cffi_backend 
+        kw = kwargs.copy()
+        if cdir not in kwargs['include_dirs']:
+            kw['include_dirs'] = [cdir] + kwargs['include_dirs']
+        if 'ffi' not in kwargs['libraries']:
+            kw['libraries'] = ['ffi'] + kwargs['libraries']
+        extension = ffiplatform.get_extension(sourcepath, modulename, **kw)
+        outputpath = ffiplatform.compile(tmpdir, extension)
+        try:
+            same = ffiplatform.samefile(outputpath, modulepath)
+        except OSError:
+            same = False
+        if not same:
+            _ensure_dir(modulepath)
+            shutil.move(outputpath, modulepath)
+        self._load_library(modulepath, modulename)
 
-    def _load_library(self, libfile):
+    def _load_library(self, modulepath, modulename):
         # loads the generated library
         # this is the final verification step
+        try:
+            imp.load_dynamic(modulename, modulepath)
+        except ImportError as e:
+            error = "importing %r: %s" % (modulepath, e)
+            raise ffiplatform.VerificationError(error)
+
+
+def _get_so_suffixes():
+    suffixes = []
+    for suffix, mode, type in imp.get_suffixes():
+        if type == imp.C_EXTENSION:
+            suffixes.append(suffix)
+
+    if not suffixes:
+        # bah, no C_EXTENSION available.  Occurs on pypy without cpyext
+        if sys.platform == 'win32':
+            suffixes = [".pyd"]
+        else:
+            suffixes = [".so"]
+
+    return suffixes
+
+
+def _ensure_dir(filename):
+    try:
+        os.makedirs(os.path.dirname(filename))
+    except OSError:
         pass
+
+
+def _get_module_name(modulepath):
+    basename = os.path.basename(modulepath)
+    # kill both the .so extension and the other .'s, as introduced
+    # by Python 3: 'basename.cpython-33m.so'
+    basename = basename.split('.', 1)[0]
+    # and the _d added in Python 2 debug builds --- but try to be
+    # conservative and not kill a legitimate _d
+    if basename.endswith('_d') and hasattr(sys, 'gettotalrefcount'):
+        basename = basename[:-2]
+    return basename

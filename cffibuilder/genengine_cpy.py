@@ -1,17 +1,18 @@
-import sys, imp
+import imp, os
 from . import model, ffiplatform
 
 
 class GenCPythonEngine(object):
 
-    def __init__(self, modulename, abspath, source):
-        self._moduleabspath = abspath
+    def __init__(self, modulename, modulepath, source, parser):
+        self._modulepath = modulepath
         self._modulename = modulename
         self._source = source
+        self._parser = parser
         self._struct_pending_verification = {}
         self._types_of_builtin_functions = {}
 
-    def find_module(self, module_name, path, so_suffixes):
+    '''def find_module(self, module_name, path, so_suffixes):
         try:
             f, filename, descr = imp.find_module(module_name, path)
         except ImportError:
@@ -23,7 +24,7 @@ class GenCPythonEngine(object):
         # imp.find_module() locating the .so in priority.
         if descr[0] not in so_suffixes:
             return None
-        return filename
+        return filename'''
 
     def collect_types(self):
         self._typesdict = {}
@@ -63,78 +64,89 @@ class GenCPythonEngine(object):
         # call to do, if any.
         self._chained_list_constants = ['0', '0']
         #
-        prnt = self._prnt
-        # first paste some standard set of lines that are mostly '#define'
-        prnt(cffimod_header)
-        prnt()
-        # then paste the C source given by the user, verbatim.
-        prnt(self.verifier.preamble)
-        prnt()
-        #
-        # call generate_cpy_xxx_decl(), for every xxx found from
-        # ffi._parser._declarations.  This generates all the functions.
-        self._generate("decl")
-        #
-        # implement the function _cffi_setup_custom() as calling the
-        # head of the chained list.
-        self._generate_setup_custom()
-        prnt()
-        #
-        # produce the method table, including the entries for the
-        # generated Python->C function wrappers, which are done
-        # by generate_cpy_function_method().
-        prnt('static PyMethodDef _cffi_methods[] = {')
-        self._generate("method")
-        prnt('  {"_cffi_setup", _cffi_setup, METH_VARARGS, NULL},')
-        prnt('  {NULL, NULL, 0, NULL}    /* Sentinel */')
-        prnt('};')
-        prnt()
-        #
-        # standard init.
-        modname = self.verifier.get_module_name()
-        constants = self._chained_list_constants[False]
-        prnt('#if PY_MAJOR_VERSION >= 3')
-        prnt()
-        prnt('static struct PyModuleDef _cffi_module_def = {')
-        prnt('  PyModuleDef_HEAD_INIT,')
-        prnt('  "%s",' % modname)
-        prnt('  NULL,')
-        prnt('  -1,')
-        prnt('  _cffi_methods,')
-        prnt('  NULL, NULL, NULL, NULL')
-        prnt('};')
-        prnt()
-        prnt('PyMODINIT_FUNC')
-        prnt('PyInit_%s(void)' % modname)
-        prnt('{')
-        prnt('  PyObject *lib;')
-        prnt('  lib = PyModule_Create(&_cffi_module_def);')
-        prnt('  if (lib == NULL)')
-        prnt('    return NULL;')
-        prnt('  if (%s < 0 || _cffi_init() < 0) {' % (constants,))
-        prnt('    Py_DECREF(lib);')
-        prnt('    return NULL;')
-        prnt('  }')
-        prnt('  return lib;')
-        prnt('}')
-        prnt()
-        prnt('#else')
-        prnt()
-        prnt('PyMODINIT_FUNC')
-        prnt('init%s(void)' % modname)
-        prnt('{')
-        prnt('  PyObject *lib;')
-        prnt('  lib = Py_InitModule("%s", _cffi_methods);' % modname)
-        prnt('  if (lib == NULL)')
-        prnt('    return;')
-        prnt('  if (%s < 0 || _cffi_init() < 0)' % (constants,))
-        prnt('    return;')
-        prnt('  return;')
-        prnt('}')
-        prnt()
-        prnt('#endif')
+        try:
+            self._f = open(self._modulepath, 'w')
+            prnt = self._prnt
+            # include the _cffi_backend module
+            prnt('#include "_cffi_backend.h"')
+            # paste some standard set of lines that are mostly '#define'
+            prnt(cffimod_header)
+            prnt()
+            # then paste the C source given by the user, verbatim.
+            prnt(self._source)
+            prnt()
+            #
+            # call generate_cpy_xxx_decl(), for every xxx found from
+            # ffi._parser._declarations.  This generates all the functions.
+            self._generate("decl")
+            #
+            # implement the function _cffi_setup_custom() as calling the
+            # head of the chained list.
+            self._generate_setup_custom()
+            prnt()
+            #
+            # produce the method table, including the entries for the
+            # generated Python->C function wrappers, which are done
+            # by generate_cpy_function_method().
+            prnt('static PyMethodDef _cffi_methods[] = {')
+            self._generate("method")
+            prnt('  {"_cffi_setup", _cffi_setup, METH_VARARGS, NULL},')
+            prnt('  {NULL, NULL, 0, NULL}    /* Sentinel */')
+            prnt('};')
+            prnt()
+            #
+            # standard init.
+            modname = self._modulename
+            constants = self._chained_list_constants[False]
+            prnt('#if PY_MAJOR_VERSION >= 3')
+            prnt()
+            prnt('static struct PyModuleDef _cffi_module_def = {')
+            prnt('  PyModuleDef_HEAD_INIT,')
+            prnt('  "%s",' % modname)
+            prnt('  NULL,')
+            prnt('  -1,')
+            prnt('  _cffi_methods,')
+            prnt('  NULL, NULL, NULL, NULL')
+            prnt('};')
+            prnt()
+            prnt('PyMODINIT_FUNC')
+            prnt('PyInit_%s(void)' % modname)
+            prnt('{')
+            prnt('  PyObject *lib;')
+            prnt('  lib = PyModule_Create(&_cffi_module_def);')
+            prnt('  if (lib == NULL)')
+            prnt('    return NULL;')
+            prnt('  if (%s < 0 || _cffi_init() < 0) {' % (constants,))
+            prnt('    Py_DECREF(lib);')
+            prnt('    return NULL;')
+            prnt('  }')
+            prnt('  return lib;')
+            prnt('}')
+            prnt()
+            prnt('#else')
+            prnt()
+            prnt('PyMODINIT_FUNC')
+            prnt('init%s(void)' % modname)
+            prnt('{')
+            prnt('  PyObject *lib;')
+            prnt('  lib = Py_InitModule("%s", _cffi_methods);' % modname)
+            prnt('  if (lib == NULL)')
+            prnt('    return;')
+            prnt('  if (%s < 0 || _cffi_init() < 0)' % (constants,))
+            prnt('    return;')
+            prnt('  return;')
+            prnt('}')
+            prnt()
+            prnt('#endif')
+            self._f.close()
+            self._f = None
 
-    def load_library(self):
+        except IOError:
+            if os.path.exists(self._modulepath):
+                os.remove(self._modulepath)
+            raise
+
+    '''def load_library(self):
         # XXX review all usages of 'self' here!
         # import it as a new extension module
         try:
@@ -179,10 +191,10 @@ class GenCPythonEngine(object):
         self._load(module, 'loaded', library=library)
         module._cffi_original_ffi = self.ffi
         module._cffi_types_of_builtin_funcs = self._types_of_builtin_functions
-        return library
+        return library'''
 
     def _get_declarations(self):
-        return sorted(self.ffi._parser._declarations.items())
+        return sorted(self._parser._declarations.items())
 
     def _generate(self, step_name):
         for name, tp in self._get_declarations():
@@ -199,7 +211,7 @@ class GenCPythonEngine(object):
                 model.attach_exception_info(e, name)
                 raise
 
-    def _load(self, module, step_name, **kwds):
+    '''def _load(self, module, step_name, **kwds):
         for name, tp in self._get_declarations():
             kind, realname = name.split(' ', 1)
             method = getattr(self, '_%s_cpy_%s' % (step_name, kind))
@@ -207,13 +219,13 @@ class GenCPythonEngine(object):
                 method(tp, realname, module, **kwds)
             except Exception as e:
                 model.attach_exception_info(e, name)
-                raise
+                raise'''
 
     def _generate_nothing(self, tp, name):
         pass
 
-    def _loaded_noop(self, tp, name, module, **kwds):
-        pass
+    '''def _loaded_noop(self, tp, name, module, **kwds):
+        pass'''
 
     # ----------
 
@@ -304,8 +316,8 @@ class GenCPythonEngine(object):
     _generate_cpy_typedef_collecttype = _generate_nothing
     _generate_cpy_typedef_decl   = _generate_nothing
     _generate_cpy_typedef_method = _generate_nothing
-    _loading_cpy_typedef         = _loaded_noop
-    _loaded_cpy_typedef          = _loaded_noop
+    '''_loading_cpy_typedef         = _loaded_noop
+    _loaded_cpy_typedef          = _loaded_noop'''
 
     # ----------
     # function declarations
@@ -403,14 +415,14 @@ class GenCPythonEngine(object):
             meth = 'METH_VARARGS'
         self._prnt('  {"%s", _cffi_f_%s, %s, NULL},' % (name, name, meth))
 
-    _loading_cpy_function = _loaded_noop
+    '''_loading_cpy_function = _loaded_noop'''
 
-    def _loaded_cpy_function(self, tp, name, module, library):
+    '''def _loaded_cpy_function(self, tp, name, module, library):
         if tp.ellipsis:
             return
         func = getattr(module, name)
         setattr(library, name, func)
-        self._types_of_builtin_functions[func] = tp
+        self._types_of_builtin_functions[func] = tp'''
 
     # ----------
     # named structs
@@ -421,10 +433,10 @@ class GenCPythonEngine(object):
         self._generate_struct_or_union_decl(tp, 'struct', name)
     def _generate_cpy_struct_method(self, tp, name):
         self._generate_struct_or_union_method(tp, 'struct', name)
-    def _loading_cpy_struct(self, tp, name, module):
+    '''def _loading_cpy_struct(self, tp, name, module):
         self._loading_struct_or_union(tp, 'struct', name, module)
     def _loaded_cpy_struct(self, tp, name, module, **kwds):
-        self._loaded_struct_or_union(tp)
+        self._loaded_struct_or_union(tp)'''
 
     _generate_cpy_union_collecttype = _generate_nothing
     def _generate_cpy_union_decl(self, tp, name):
@@ -432,10 +444,10 @@ class GenCPythonEngine(object):
         self._generate_struct_or_union_decl(tp, 'union', name)
     def _generate_cpy_union_method(self, tp, name):
         self._generate_struct_or_union_method(tp, 'union', name)
-    def _loading_cpy_union(self, tp, name, module):
+    '''def _loading_cpy_union(self, tp, name, module):
         self._loading_struct_or_union(tp, 'union', name, module)
     def _loaded_cpy_union(self, tp, name, module, **kwds):
-        self._loaded_struct_or_union(tp)
+        self._loaded_struct_or_union(tp)'''
 
     def _generate_struct_or_union_decl(self, tp, prefix, name):
         if tp.fldnames is None:
@@ -491,7 +503,7 @@ class GenCPythonEngine(object):
         self._prnt('  {"%s", %s, METH_NOARGS, NULL},' % (layoutfuncname,
                                                          layoutfuncname))
 
-    def _loading_struct_or_union(self, tp, prefix, name, module):
+    '''def _loading_struct_or_union(self, tp, prefix, name, module):
         if tp.fldnames is None:
             return     # nothing to do with opaque structs
         layoutfuncname = '_cffi_layout_%s_%s' % (prefix, name)
@@ -540,7 +552,7 @@ class GenCPythonEngine(object):
                     check(layout[i+1], ffi.sizeof(BField),
                           "wrong size for field %r" % (fname,))
                 i += 2
-            assert i == len(layout)
+            assert i == len(layout)'''
 
     # ----------
     # 'anonymous' declarations.  These are produced for anonymous structs
@@ -558,7 +570,7 @@ class GenCPythonEngine(object):
         if not isinstance(tp, model.EnumType):
             self._generate_struct_or_union_method(tp, '', name)
 
-    def _loading_cpy_anonymous(self, tp, name, module):
+    '''def _loading_cpy_anonymous(self, tp, name, module):
         if isinstance(tp, model.EnumType):
             self._loading_cpy_enum(tp, name, module)
         else:
@@ -568,7 +580,7 @@ class GenCPythonEngine(object):
         if isinstance(tp, model.EnumType):
             self._loaded_cpy_enum(tp, name, module, **kwds)
         else:
-            self._loaded_struct_or_union(tp)
+            self._loaded_struct_or_union(tp)'''
 
     # ----------
     # constants, likely declared with '#define'
@@ -627,8 +639,8 @@ class GenCPythonEngine(object):
         self._generate_cpy_const(is_int, name, tp)
 
     _generate_cpy_constant_method = _generate_nothing
-    _loading_cpy_constant = _loaded_noop
-    _loaded_cpy_constant  = _loaded_noop
+    '''_loading_cpy_constant = _loaded_noop
+    _loaded_cpy_constant  = _loaded_noop'''
 
     # ----------
     # enums
@@ -676,7 +688,7 @@ class GenCPythonEngine(object):
     _generate_cpy_enum_collecttype = _generate_nothing
     _generate_cpy_enum_method = _generate_nothing
 
-    def _loading_cpy_enum(self, tp, name, module):
+    '''def _loading_cpy_enum(self, tp, name, module):
         if tp.partial:
             enumvalues = [getattr(module, enumerator)
                           for enumerator in tp.enumerators]
@@ -685,7 +697,7 @@ class GenCPythonEngine(object):
 
     def _loaded_cpy_enum(self, tp, name, module, library):
         for enumerator, enumvalue in zip(tp.enumerators, tp.enumvalues):
-            setattr(library, enumerator, enumvalue)
+            setattr(library, enumerator, enumvalue)'''
 
     # ----------
     # macros: for now only for integers
@@ -696,8 +708,8 @@ class GenCPythonEngine(object):
 
     _generate_cpy_macro_collecttype = _generate_nothing
     _generate_cpy_macro_method = _generate_nothing
-    _loading_cpy_macro = _loaded_noop
-    _loaded_cpy_macro  = _loaded_noop
+    '''_loading_cpy_macro = _loaded_noop
+    _loaded_cpy_macro  = _loaded_noop'''
 
     # ----------
     # global variables
@@ -719,9 +731,9 @@ class GenCPythonEngine(object):
             self._generate_cpy_const(False, name, tp_ptr, category='var')
 
     _generate_cpy_variable_method = _generate_nothing
-    _loading_cpy_variable = _loaded_noop
+    '''_loading_cpy_variable = _loaded_noop'''
 
-    def _loaded_cpy_variable(self, tp, name, module, library):
+    '''def _loaded_cpy_variable(self, tp, name, module, library):
         value = getattr(library, name)
         if isinstance(tp, model.ArrayType):   # int a[5] is "constant" in the
                                               # sense that "a=..." is forbidden
@@ -751,7 +763,7 @@ class GenCPythonEngine(object):
         def setter(library, value):
             ptr[0] = value
         setattr(type(library), name, property(getter, setter))
-        type(library)._cffi_dir.append(name)
+        type(library)._cffi_dir.append(name)'''
 
     # ----------
 
