@@ -68,7 +68,7 @@ class GenCPythonEngine(object):
             self._f = open(self._modulepath, 'w')
             prnt = self._prnt
             # include the _cffi_backend module
-            prnt('#include "_cffi_backend.h"')
+            #prnt('#include "_cffi_backend.h"')
             # paste some standard set of lines that are mostly '#define'
             prnt(cffimod_header)
             prnt()
