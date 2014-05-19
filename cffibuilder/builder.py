@@ -36,50 +36,55 @@ class Builder(object):
             self._cdefsources.append(csource)
 
     def build(self, modulename, source='', srcdir=None, tmpdir=None, **kwargs):
+        modulename = os.path.splitext(modulename)[0]
         if srcdir is None:
             srcdir = os.path.join(
                 os.path.abspath(os.path.dirname(sys._getframe(1).f_code.co_filename)),
-                'build/'
+                'build/%s/' % modulename
             )
         _ensure_dir(srcdir)
-        modulename = os.path.splitext(modulename)[0]
-        sourcepath = os.path.join(srcdir, modulename + '.c')
 
         with self._lock:
-            self._generate_code(modulename, sourcepath, source)
-            self._verify(sourcepath, tmpdir, **kwargs)
+            self._generate_code(modulename, srcdir, source)
+            self._verify(modulename, srcdir, tmpdir, **kwargs)
 
-    def _generate_code(self, modulename, sourcepath, source):
+    def _generate_code(self, modulename, srcdir, source):
+        # generate library C extension code
+        modulename_lib = '%s_lib' % modulename
+        sourcepath_lib = os.path.join(srcdir, '%s_lib.c' % modulename)
         from .genengine_cpy import GenCPythonEngine
-        engine = GenCPythonEngine(modulename, sourcepath, source, self._parser)
+        engine = GenCPythonEngine(modulename_lib, sourcepath_lib, source, self._parser)
         engine.write_source_to_f()
+        # copy backend C extension code
+        shutil.copy(os.path.join(_get_c_dir(), '_cffi_backend.c'), srcdir)
+        # write code to import extension modules at top level as ffi and lib
+        with open(os.path.join(srcdir, '__init__.py'), 'w') as f:
+            f.write(module_init % modulename)
 
-    def _verify(self, sourcepath, tmpdir=None, **kwargs):
+    def _verify(self, modulename, srcdir, tmpdir=None, **kwargs):
         # figure out some file paths
         if tmpdir is None:
-            tmpdir = os.path.join(os.path.dirname(sourcepath), '__pycache__')
+            tmpdir = os.path.join(srcdir, '../__pycache__/')
         _ensure_dir(tmpdir)
-        suffix = _get_so_suffixes()[0]
-        modulepath = os.path.splitext(sourcepath)[0] + suffix
-        modulename = _get_module_name(modulepath)
-        sourcepath = ffiplatform.maybe_relative_path(sourcepath)
-        cdir = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../c/')
-        # update compiler args with libraries and dirs to compile _cffi_backend 
+        modulename_lib = '%s_lib' % modulename
+        sourcepath_lib = os.path.join(srcdir, '%s_lib.c' % modulename)
+        sourcepath_lib = ffiplatform.maybe_relative_path(sourcepath_lib)
+        modulename_ffi = '_cffi_backend'
+        sourcepath_ffi = os.path.join(srcdir, '_cffi_backend.c')
+        sourcepath_ffi = ffiplatform.maybe_relative_path(sourcepath_ffi)
+        # update compiler args with libraries and dirs to compile _cffi_backend
         kw = kwargs.copy()
-        if cdir not in kwargs['include_dirs']:
-            kw['include_dirs'] = [cdir] + kwargs['include_dirs']
-        if 'ffi' not in kwargs['libraries']:
-            kw['libraries'] = ['ffi'] + kwargs['libraries']
-        extension = ffiplatform.get_extension(sourcepath, modulename, **kw)
-        outputpath = ffiplatform.compile(tmpdir, extension)
-        try:
-            same = ffiplatform.samefile(outputpath, modulepath)
-        except OSError:
-            same = False
-        if not same:
-            _ensure_dir(modulepath)
-            shutil.move(outputpath, modulepath)
-        self._load_library(modulepath, modulename)
+        kw['include_dirs'] = [_get_c_dir()] + kwargs['include_dirs']
+        kw['libraries'] = ['ffi'] + kwargs['libraries']
+        # compile and load the 2 extension modules
+        extension_ffi = ffiplatform.get_extension(sourcepath_ffi, modulename_ffi, **kw)
+        extension_lib = ffiplatform.get_extension(sourcepath_lib, modulename_lib, **kw)
+        for extension, modname in ((extension_ffi, modulename_ffi),
+                                   (extension_lib, modulename_lib)):
+            outputpath = ffiplatform.compile(tmpdir, extension)
+            self._load_library(outputpath, modname)
+        # import the top level module
+        imp.load_source(modulename, os.path.join(srcdir, '__init__.py'))
 
     def _load_library(self, modulepath, modulename):
         # loads the generated library
@@ -91,22 +96,6 @@ class Builder(object):
             raise ffiplatform.VerificationError(error)
 
 
-def _get_so_suffixes():
-    suffixes = []
-    for suffix, mode, type in imp.get_suffixes():
-        if type == imp.C_EXTENSION:
-            suffixes.append(suffix)
-
-    if not suffixes:
-        # bah, no C_EXTENSION available.  Occurs on pypy without cpyext
-        if sys.platform == 'win32':
-            suffixes = [".pyd"]
-        else:
-            suffixes = [".so"]
-
-    return suffixes
-
-
 def _ensure_dir(filename):
     try:
         os.makedirs(os.path.dirname(filename))
@@ -114,13 +103,14 @@ def _ensure_dir(filename):
         pass
 
 
-def _get_module_name(modulepath):
-    basename = os.path.basename(modulepath)
-    # kill both the .so extension and the other .'s, as introduced
-    # by Python 3: 'basename.cpython-33m.so'
-    basename = basename.split('.', 1)[0]
-    # and the _d added in Python 2 debug builds --- but try to be
-    # conservative and not kill a legitimate _d
-    if basename.endswith('_d') and hasattr(sys, 'gettotalrefcount'):
-        basename = basename[:-2]
-    return basename
+def _get_c_dir():
+    relativedir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'c/')
+    return os.path.abspath(relativedir)
+
+
+module_init = '''
+import _cffi_backend as ffi
+import %s_lib as lib
+
+__all__ = ['ffi', 'lib']
+'''
