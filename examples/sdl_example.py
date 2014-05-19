@@ -19,5 +19,5 @@ builder.build(
 """)
 
 import _sdl
-print dir(_sdl.lib)
-print dir(_sdl.ffi)
+print(dir(_sdl.lib))
+print(dir(_sdl.ffi))
