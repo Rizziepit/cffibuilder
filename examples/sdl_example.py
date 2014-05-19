@@ -7,7 +7,7 @@ builder.cdef("""
     Uint8 _pygame_SDL_BUTTON(Uint8 X);
 """)
 builder.build(
-    "sdllib",
+    "_sdl",
     libraries=['SDL'],
     include_dirs=['/usr/include/SDL', '/usr/local/include/SDL'],
     source="""
@@ -18,7 +18,6 @@ builder.build(
     }
 """)
 
-import sdllib
-print sdllib._pygame_SDL_BUTTON
-print sdllib.new
-print sdllib.NULL
+import _sdl
+print dir(_sdl.lib)
+print dir(_sdl.ffi)

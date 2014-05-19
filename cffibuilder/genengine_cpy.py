@@ -1,30 +1,15 @@
-import imp, os
+import os
 from . import model, ffiplatform
 
 
 class GenCPythonEngine(object):
 
-    def __init__(self, modulename, modulepath, source, parser):
+    def __init__(self, modulename, modulepath, backendpath, source, parser):
         self._modulepath = modulepath
         self._modulename = modulename
+        self._backendpath = backendpath
         self._source = source
         self._parser = parser
-        self._struct_pending_verification = {}
-        self._types_of_builtin_functions = {}
-
-    '''def find_module(self, module_name, path, so_suffixes):
-        try:
-            f, filename, descr = imp.find_module(module_name, path)
-        except ImportError:
-            return None
-        if f is not None:
-            f.close()
-        # Note that after a setuptools installation, there are both .py
-        # and .so files with the same basename.  The code here relies on
-        # imp.find_module() locating the .so in priority.
-        if descr[0] not in so_suffixes:
-            return None
-        return filename'''
 
     def collect_types(self):
         self._typesdict = {}
@@ -43,6 +28,11 @@ class GenCPythonEngine(object):
                 and tp not in self._typesdict):
             num = len(self._typesdict)
             self._typesdict[tp] = num
+
+    def _get_backend_source(self):
+        with open(self._backendpath) as source_f:
+            source = source_f.read()
+        return source
 
     def write_source_to_f(self):
         self.collect_types()
@@ -67,8 +57,8 @@ class GenCPythonEngine(object):
         try:
             self._f = open(self._modulepath, 'w')
             prnt = self._prnt
-            # include the _cffi_backend module
-            #prnt('#include "_cffi_backend.h"')
+            # paste source from _cffi_backend.c
+            prnt(self._get_backend_source())
             # paste some standard set of lines that are mostly '#define'
             prnt(cffimod_header)
             prnt()
@@ -102,7 +92,7 @@ class GenCPythonEngine(object):
             prnt()
             prnt('static struct PyModuleDef _cffi_module_def = {')
             prnt('  PyModuleDef_HEAD_INIT,')
-            prnt('  "%s",' % modname)
+            prnt('  "%s_lib",' % modname)
             prnt('  NULL,')
             prnt('  -1,')
             prnt('  _cffi_methods,')
@@ -110,7 +100,7 @@ class GenCPythonEngine(object):
             prnt('};')
             prnt()
             prnt('PyMODINIT_FUNC')
-            prnt('PyInit_%s(void)' % modname)
+            prnt('PyInit_%s_lib(void)' % modname)
             prnt('{')
             prnt('  PyObject *lib;')
             prnt('  lib = PyModule_Create(&_cffi_module_def);')
@@ -126,14 +116,65 @@ class GenCPythonEngine(object):
             prnt('#else')
             prnt()
             prnt('PyMODINIT_FUNC')
-            prnt('init%s(void)' % modname)
+            prnt('init%s_lib(void)' % modname)
             prnt('{')
             prnt('  PyObject *lib;')
-            prnt('  lib = Py_InitModule("%s", _cffi_methods);' % modname)
+            prnt('  lib = Py_InitModule("%s_lib", _cffi_methods);' % modname)
             prnt('  if (lib == NULL)')
             prnt('    return;')
             prnt('  if (%s < 0 || _cffi_init() < 0)' % (constants,))
             prnt('    return;')
+            prnt('  return;')
+            prnt('}')
+            prnt()
+            prnt('#endif')
+
+            # init for parent module
+            prnt()
+            prnt('static PyMethodDef _parent_methods[] = {')
+            prnt('  {NULL, NULL, 0, NULL}    /* Sentinel */')
+            prnt('};')
+            prnt()
+            prnt('#if PY_MAJOR_VERSION >= 3')
+            prnt()
+            prnt('static struct PyModuleDef _parent_module_def = {')
+            prnt('  PyModuleDef_HEAD_INIT,')
+            prnt('  "%s",' % modname)
+            prnt('  NULL,')
+            prnt('  -1,')
+            prnt('  _parent_methods,')
+            prnt('  NULL, NULL, NULL, NULL')
+            prnt('};')
+            prnt()
+            prnt('PyMODINIT_FUNC')
+            #TODO Python 3 version of submodule init
+            prnt('PyInit_%s(void)' % modname)
+            prnt('{')
+            prnt('  PyObject *lib, *lib, *ffi;')
+            prnt('  module = PyModule_Create(&_parent_module_def);')
+            prnt('  if (module == NULL)')
+            prnt('    return NULL;')
+            prnt('  return module;')
+            prnt('}')
+            prnt()
+            prnt('#else')
+            prnt()
+            prnt('PyMODINIT_FUNC')
+            prnt('init%s(void)' % modname)
+            prnt('{')
+            prnt('  init%s_lib();' % modname)
+            prnt('  init_cffi_backend();')
+            prnt()
+            prnt('  PyObject *module, *lib, *ffi;')
+            prnt('  module = Py_InitModule("%s", _parent_methods);' % modname)
+            prnt('  if (module == NULL)')
+            prnt('    return;')
+            prnt('  lib = PyImport_ImportModule("%s_lib");' % modname)
+            prnt('  if (lib == NULL || PyModule_AddObject(module, "lib", lib) < 0)')
+            prnt('     return;')
+            prnt('  ffi = PyImport_ImportModule("_cffi_backend");')
+            prnt('  if (ffi == NULL || PyModule_AddObject(module, "ffi", ffi) < 0)')
+            prnt('     return;')
             prnt('  return;')
             prnt('}')
             prnt()
@@ -145,53 +186,6 @@ class GenCPythonEngine(object):
             if os.path.exists(self._modulepath):
                 os.remove(self._modulepath)
             raise
-
-    '''def load_library(self):
-        # XXX review all usages of 'self' here!
-        # import it as a new extension module
-        try:
-            module = imp.load_dynamic(self.verifier.get_module_name(),
-                                      self.verifier.modulefilename)
-        except ImportError as e:
-            error = "importing %r: %s" % (self.verifier.modulefilename, e)
-            raise ffiplatform.VerificationError(error)
-        #
-        # call loading_cpy_struct() to get the struct layout inferred by
-        # the C compiler
-        self._load(module, 'loading')
-        #
-        # the C code will need the <ctype> objects.  Collect them in
-        # order in a list.
-        revmapping = dict([(value, key)
-                           for (key, value) in self._typesdict.items()])
-        lst = [revmapping[i] for i in range(len(revmapping))]
-        lst = list(map(self.ffi._get_cached_btype, lst))
-        #
-        # build the FFILibrary class and instance and call _cffi_setup().
-        # this will set up some fields like '_cffi_types', and only then
-        # it will invoke the chained list of functions that will really
-        # build (notably) the constant objects, as <cdata> if they are
-        # pointers, and store them as attributes on the 'library' object.
-        class FFILibrary(object):
-            _cffi_python_module = module
-            _cffi_ffi = self.ffi
-            _cffi_dir = []
-            def __dir__(self):
-                return FFILibrary._cffi_dir + list(self.__dict__)
-        library = FFILibrary()
-        if module._cffi_setup(lst, ffiplatform.VerificationError, library):
-            import warnings
-            warnings.warn("reimporting %r might overwrite older definitions"
-                          % (self.verifier.get_module_name()))
-        #
-        # finally, call the loaded_cpy_xxx() functions.  This will perform
-        # the final adjustments, like copying the Python->C wrapper
-        # functions from the module to the 'library' object, and setting
-        # up the FFILibrary class with properties for the global C variables.
-        self._load(module, 'loaded', library=library)
-        module._cffi_original_ffi = self.ffi
-        module._cffi_types_of_builtin_funcs = self._types_of_builtin_functions
-        return library'''
 
     def _get_declarations(self):
         return sorted(self._parser._declarations.items())
@@ -211,21 +205,8 @@ class GenCPythonEngine(object):
                 model.attach_exception_info(e, name)
                 raise
 
-    '''def _load(self, module, step_name, **kwds):
-        for name, tp in self._get_declarations():
-            kind, realname = name.split(' ', 1)
-            method = getattr(self, '_%s_cpy_%s' % (step_name, kind))
-            try:
-                method(tp, realname, module, **kwds)
-            except Exception as e:
-                model.attach_exception_info(e, name)
-                raise'''
-
     def _generate_nothing(self, tp, name):
         pass
-
-    '''def _loaded_noop(self, tp, name, module, **kwds):
-        pass'''
 
     # ----------
 
@@ -316,8 +297,6 @@ class GenCPythonEngine(object):
     _generate_cpy_typedef_collecttype = _generate_nothing
     _generate_cpy_typedef_decl   = _generate_nothing
     _generate_cpy_typedef_method = _generate_nothing
-    '''_loading_cpy_typedef         = _loaded_noop
-    _loaded_cpy_typedef          = _loaded_noop'''
 
     # ----------
     # function declarations
@@ -415,15 +394,6 @@ class GenCPythonEngine(object):
             meth = 'METH_VARARGS'
         self._prnt('  {"%s", _cffi_f_%s, %s, NULL},' % (name, name, meth))
 
-    '''_loading_cpy_function = _loaded_noop'''
-
-    '''def _loaded_cpy_function(self, tp, name, module, library):
-        if tp.ellipsis:
-            return
-        func = getattr(module, name)
-        setattr(library, name, func)
-        self._types_of_builtin_functions[func] = tp'''
-
     # ----------
     # named structs
 
@@ -433,10 +403,6 @@ class GenCPythonEngine(object):
         self._generate_struct_or_union_decl(tp, 'struct', name)
     def _generate_cpy_struct_method(self, tp, name):
         self._generate_struct_or_union_method(tp, 'struct', name)
-    '''def _loading_cpy_struct(self, tp, name, module):
-        self._loading_struct_or_union(tp, 'struct', name, module)
-    def _loaded_cpy_struct(self, tp, name, module, **kwds):
-        self._loaded_struct_or_union(tp)'''
 
     _generate_cpy_union_collecttype = _generate_nothing
     def _generate_cpy_union_decl(self, tp, name):
@@ -444,10 +410,6 @@ class GenCPythonEngine(object):
         self._generate_struct_or_union_decl(tp, 'union', name)
     def _generate_cpy_union_method(self, tp, name):
         self._generate_struct_or_union_method(tp, 'union', name)
-    '''def _loading_cpy_union(self, tp, name, module):
-        self._loading_struct_or_union(tp, 'union', name, module)
-    def _loaded_cpy_union(self, tp, name, module, **kwds):
-        self._loaded_struct_or_union(tp)'''
 
     def _generate_struct_or_union_decl(self, tp, prefix, name):
         if tp.fldnames is None:
@@ -503,57 +465,6 @@ class GenCPythonEngine(object):
         self._prnt('  {"%s", %s, METH_NOARGS, NULL},' % (layoutfuncname,
                                                          layoutfuncname))
 
-    '''def _loading_struct_or_union(self, tp, prefix, name, module):
-        if tp.fldnames is None:
-            return     # nothing to do with opaque structs
-        layoutfuncname = '_cffi_layout_%s_%s' % (prefix, name)
-        #
-        function = getattr(module, layoutfuncname)
-        layout = function()
-        if isinstance(tp, model.StructOrUnion) and tp.partial:
-            # use the function()'s sizes and offsets to guide the
-            # layout of the struct
-            totalsize = layout[0]
-            totalalignment = layout[1]
-            fieldofs = layout[2::2]
-            fieldsize = layout[3::2]
-            tp.force_flatten()
-            assert len(fieldofs) == len(fieldsize) == len(tp.fldnames)
-            tp.fixedlayout = fieldofs, fieldsize, totalsize, totalalignment
-        else:
-            cname = ('%s %s' % (prefix, name)).strip()
-            self._struct_pending_verification[tp] = layout, cname
-
-    def _loaded_struct_or_union(self, tp):
-        if tp.fldnames is None:
-            return     # nothing to do with opaque structs
-        self.ffi._get_cached_btype(tp)   # force 'fixedlayout' to be considered
-
-        if tp in self._struct_pending_verification:
-            # check that the layout sizes and offsets match the real ones
-            def check(realvalue, expectedvalue, msg):
-                if realvalue != expectedvalue:
-                    raise ffiplatform.VerificationError(
-                        "%s (we have %d, but C compiler says %d)"
-                        % (msg, expectedvalue, realvalue))
-            ffi = self.ffi
-            BStruct = ffi._get_cached_btype(tp)
-            layout, cname = self._struct_pending_verification.pop(tp)
-            check(layout[0], ffi.sizeof(BStruct), "wrong total size")
-            check(layout[1], ffi.alignof(BStruct), "wrong total alignment")
-            i = 2
-            for fname, ftype, fbitsize in tp.enumfields():
-                if fbitsize >= 0:
-                    continue        # xxx ignore fbitsize for now
-                check(layout[i], ffi.offsetof(BStruct, fname),
-                      "wrong offset for field %r" % (fname,))
-                if layout[i+1] != 0:
-                    BField = ffi._get_cached_btype(ftype)
-                    check(layout[i+1], ffi.sizeof(BField),
-                          "wrong size for field %r" % (fname,))
-                i += 2
-            assert i == len(layout)'''
-
     # ----------
     # 'anonymous' declarations.  These are produced for anonymous structs
     # or unions; the 'name' is obtained by a typedef.
@@ -569,18 +480,6 @@ class GenCPythonEngine(object):
     def _generate_cpy_anonymous_method(self, tp, name):
         if not isinstance(tp, model.EnumType):
             self._generate_struct_or_union_method(tp, '', name)
-
-    '''def _loading_cpy_anonymous(self, tp, name, module):
-        if isinstance(tp, model.EnumType):
-            self._loading_cpy_enum(tp, name, module)
-        else:
-            self._loading_struct_or_union(tp, '', name, module)
-
-    def _loaded_cpy_anonymous(self, tp, name, module, **kwds):
-        if isinstance(tp, model.EnumType):
-            self._loaded_cpy_enum(tp, name, module, **kwds)
-        else:
-            self._loaded_struct_or_union(tp)'''
 
     # ----------
     # constants, likely declared with '#define'
@@ -639,8 +538,6 @@ class GenCPythonEngine(object):
         self._generate_cpy_const(is_int, name, tp)
 
     _generate_cpy_constant_method = _generate_nothing
-    '''_loading_cpy_constant = _loaded_noop
-    _loaded_cpy_constant  = _loaded_noop'''
 
     # ----------
     # enums
@@ -688,17 +585,6 @@ class GenCPythonEngine(object):
     _generate_cpy_enum_collecttype = _generate_nothing
     _generate_cpy_enum_method = _generate_nothing
 
-    '''def _loading_cpy_enum(self, tp, name, module):
-        if tp.partial:
-            enumvalues = [getattr(module, enumerator)
-                          for enumerator in tp.enumerators]
-            tp.enumvalues = tuple(enumvalues)
-            tp.partial_resolved = True
-
-    def _loaded_cpy_enum(self, tp, name, module, library):
-        for enumerator, enumvalue in zip(tp.enumerators, tp.enumvalues):
-            setattr(library, enumerator, enumvalue)'''
-
     # ----------
     # macros: for now only for integers
 
@@ -708,8 +594,6 @@ class GenCPythonEngine(object):
 
     _generate_cpy_macro_collecttype = _generate_nothing
     _generate_cpy_macro_method = _generate_nothing
-    '''_loading_cpy_macro = _loaded_noop
-    _loaded_cpy_macro  = _loaded_noop'''
 
     # ----------
     # global variables
@@ -731,39 +615,6 @@ class GenCPythonEngine(object):
             self._generate_cpy_const(False, name, tp_ptr, category='var')
 
     _generate_cpy_variable_method = _generate_nothing
-    '''_loading_cpy_variable = _loaded_noop'''
-
-    '''def _loaded_cpy_variable(self, tp, name, module, library):
-        value = getattr(library, name)
-        if isinstance(tp, model.ArrayType):   # int a[5] is "constant" in the
-                                              # sense that "a=..." is forbidden
-            if tp.length == '...':
-                assert isinstance(value, tuple)
-                (value, size) = value
-                BItemType = self.ffi._get_cached_btype(tp.item)
-                length, rest = divmod(size, self.ffi.sizeof(BItemType))
-                if rest != 0:
-                    raise ffiplatform.VerificationError(
-                        "bad size: %r does not seem to be an array of %s" %
-                        (name, tp.item))
-                tp = tp.resolve_length(length)
-            # 'value' is a <cdata 'type *'> which we have to replace with
-            # a <cdata 'type[N]'> if the N is actually known
-            if tp.length is not None:
-                BArray = self.ffi._get_cached_btype(tp)
-                value = self.ffi.cast(BArray, value)
-                setattr(library, name, value)
-            return
-        # remove ptr=<cdata 'int *'> from the library instance, and replace
-        # it by a property on the class, which reads/writes into ptr[0].
-        ptr = value
-        delattr(library, name)
-        def getter(library):
-            return ptr[0]
-        def setter(library, value):
-            ptr[0] = value
-        setattr(type(library), name, property(getter, setter))
-        type(library)._cffi_dir.append(name)'''
 
     # ----------
 
@@ -775,11 +626,7 @@ class GenCPythonEngine(object):
         prnt('}')
 
 cffimod_header = r'''
-#include <Python.h>
-#include <stddef.h>
-
 #if defined(MS_WIN32) && !defined(_STDINT_H)
-#include <malloc.h>   /* for alloca() */
 typedef __int8 int8_t;
 typedef __int16 int16_t;
 typedef __int32 int32_t;
@@ -791,10 +638,6 @@ typedef unsigned __int64 uint64_t;
 #if !defined(_MSC_VER) || _MSC_VER <= 1700
 typedef unsigned char _Bool;
 #endif
-#else
-#if (defined (__SVR4) && defined (__sun)) || defined(_AIX)
-#  include <alloca.h>
-#endif
 #endif
 
 #if PY_MAJOR_VERSION < 3
@@ -803,10 +646,6 @@ typedef unsigned char _Bool;
 # define PyCapsule_CheckExact(capsule) (PyCObject_Check(capsule))
 # define PyCapsule_GetPointer(capsule, name) \
     (PyCObject_AsVoidPtr(capsule))
-#endif
-
-#if PY_MAJOR_VERSION >= 3
-# define PyInt_FromLong PyLong_FromLong
 #endif
 
 #define _cffi_from_c_double PyFloat_FromDouble

@@ -51,7 +51,10 @@ class Builder(object):
 
     def _generate_code(self, modulename, sourcepath, source):
         from .genengine_cpy import GenCPythonEngine
-        engine = GenCPythonEngine(modulename, sourcepath, source, self._parser)
+        cdir = _get_c_dir()
+        backendpath = os.path.join(cdir, '_cffi_backend.c')
+        engine = GenCPythonEngine(modulename, sourcepath, backendpath,
+                                  source, self._parser)
         engine.write_source_to_f()
 
     def _verify(self, sourcepath, tmpdir=None, **kwargs):
@@ -60,26 +63,22 @@ class Builder(object):
             tmpdir = os.path.join(os.path.dirname(sourcepath), '__pycache__')
         _ensure_dir(tmpdir)
         suffix = _get_so_suffixes()[0]
-        modulepath = os.path.splitext(sourcepath)[0] + suffix
-        modulename = _get_module_name(modulepath)
-        sourcepath = ffiplatform.maybe_relative_path(sourcepath)
-        cdir = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../c/')
-        # update compiler args with libraries and dirs to compile _cffi_backend 
+        modpath = os.path.splitext(sourcepath)[0] + suffix
+        modulename = _get_module_name(modpath)
+        # update compiler args with libraries and dirs to compile _cffi_backend.c
         kw = kwargs.copy()
-        if cdir not in kwargs['include_dirs']:
-            kw['include_dirs'] = [cdir] + kwargs['include_dirs']
-        if 'ffi' not in kwargs['libraries']:
-            kw['libraries'] = ['ffi'] + kwargs['libraries']
+        kw['include_dirs'] = [_get_c_dir()] + kwargs['include_dirs']
+        kw['libraries'] = ['ffi'] + kwargs['libraries']
         extension = ffiplatform.get_extension(sourcepath, modulename, **kw)
         outputpath = ffiplatform.compile(tmpdir, extension)
         try:
-            same = ffiplatform.samefile(outputpath, modulepath)
+            same = ffiplatform.samefile(outputpath, modpath)
         except OSError:
             same = False
         if not same:
-            _ensure_dir(modulepath)
-            shutil.move(outputpath, modulepath)
-        self._load_library(modulepath, modulename)
+            _ensure_dir(modpath)
+            shutil.move(outputpath, modpath)
+        self._load_library(modpath, modulename)
 
     def _load_library(self, modulepath, modulename):
         # loads the generated library
@@ -124,3 +123,7 @@ def _get_module_name(modulepath):
     if basename.endswith('_d') and hasattr(sys, 'gettotalrefcount'):
         basename = basename[:-2]
     return basename
+
+def _get_c_dir():
+    relativedir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'c/')
+    return os.path.abspath(relativedir)
