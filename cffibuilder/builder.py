@@ -57,6 +57,9 @@ class Builder(object):
         engine.write_source_to_f()
         # copy backend C extension code
         shutil.copy(os.path.join(_get_c_dir(), '_cffi_backend.c'), srcdir)
+        # copy some Python code
+        for filename in ('api.py', 'lock.py', 'model.py'):
+            shutil.copy(os.path.join(os.path.dirname(__file__), filename), srcdir)
         # write code to import extension modules at top level as ffi and lib
         with open(os.path.join(srcdir, '__init__.py'), 'w') as f:
             f.write(module_init % modulename)
@@ -84,11 +87,11 @@ class Builder(object):
             outputpath = ffiplatform.compile(tmpdir, extension)
             self._load_library(outputpath, modname)
         # import the top level module
-        imp.load_source(modulename, os.path.join(srcdir, '__init__.py'))
+        sys.path.insert(0, os.path.dirname(srcdir.rstrip('/')))
+        imp.load_module(modulename, *imp.find_module(modulename))
 
     def _load_library(self, modulepath, modulename):
         # loads the generated library
-        # this is the final verification step
         try:
             imp.load_dynamic(modulename, modulepath)
         except ImportError as e:
@@ -109,8 +112,10 @@ def _get_c_dir():
 
 
 module_init = '''
-import _cffi_backend as ffi
 import %s_lib as lib
+from api import FFI
 
-__all__ = ['ffi', 'lib']
+ffi = FFI()
+
+__all__ = ['lib', 'ffi']
 '''
