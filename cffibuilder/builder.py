@@ -79,7 +79,8 @@ class Builder(object):
         sourcepath_ffi = ffiplatform.maybe_relative_path(sourcepath_ffi)
         # update compiler args with libraries and dirs to compile _cffi_backend
         kw = kwargs.copy()
-        kw['include_dirs'] = [_get_c_dir()] + kwargs['include_dirs']
+        kw['include_dirs'] = ['/usr/include/ffi', '/usr/include/libffi'] \
+                             + kwargs['include_dirs']
         kw['libraries'] = ['ffi'] + kwargs['libraries']
         # compile and load the 2 extension modules
         extension_ffi = ffiplatform.get_extension(sourcepath_ffi, modulename_ffi, **kw)
