@@ -49,18 +49,20 @@ class Builder(object):
             self._verify(modulename, srcdir, tmpdir, **kwargs)
 
     def _generate_code(self, modulename, srcdir, source):
+        # copy all the C
+        srcdir_c = os.path.join(srcdir, 'c/')
+        shutil.rmtree(srcdir_c, True)
+        shutil.copytree(_get_c_dir(), srcdir_c)
         # generate library C extension code
         modulename_lib = '%s_lib' % modulename
-        sourcepath_lib = os.path.join(srcdir, '%s_lib.c' % modulename)
+        sourcepath_lib = os.path.join(srcdir_c, '%s_lib.c' % modulename)
         from .genengine_cpy import GenCPythonEngine
         engine = GenCPythonEngine(modulename_lib, sourcepath_lib, source, self._parser)
         engine.write_source_to_f()
-        # copy backend C extension code
-        shutil.copy(os.path.join(_get_c_dir(), '_cffi_backend.c'), srcdir)
         # copy some Python code
         for filename in ('api.py', 'lock.py', 'model.py'):
             shutil.copy(os.path.join(os.path.dirname(__file__), filename), srcdir)
-        # write code to import extension modules at top level as ffi and lib
+        # write code to put ffi object and lib at top level
         with open(os.path.join(srcdir, '__init__.py'), 'w') as f:
             f.write(module_init % modulename)
 
@@ -70,10 +72,10 @@ class Builder(object):
             tmpdir = os.path.join(srcdir, '../__pycache__/')
         _ensure_dir(tmpdir)
         modulename_lib = '%s_lib' % modulename
-        sourcepath_lib = os.path.join(srcdir, '%s_lib.c' % modulename)
+        sourcepath_lib = os.path.join(srcdir, 'c/%s_lib.c' % modulename)
         sourcepath_lib = ffiplatform.maybe_relative_path(sourcepath_lib)
         modulename_ffi = '_cffi_backend'
-        sourcepath_ffi = os.path.join(srcdir, '_cffi_backend.c')
+        sourcepath_ffi = os.path.join(srcdir, 'c/_cffi_backend.c')
         sourcepath_ffi = ffiplatform.maybe_relative_path(sourcepath_ffi)
         # update compiler args with libraries and dirs to compile _cffi_backend
         kw = kwargs.copy()
