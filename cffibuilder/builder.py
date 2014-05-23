@@ -78,8 +78,8 @@ class Builder(object):
         # update compiler args with libraries and dirs to compile _cffi_backend
         kw = kwargs.copy()
         kw['include_dirs'] = ['/usr/include/ffi', '/usr/include/libffi'] \
-                             + kwargs['include_dirs']
-        kw['libraries'] = ['ffi'] + kwargs['libraries']
+                             + kwargs.get('include_dirs', [])
+        kw['libraries'] = ['ffi'] + kwargs.get('libraries', [])
         # compile and load the 2 extension modules
         extension_ffi = ffiplatform.get_extension(sourcepath_ffi, modulename_ffi, **kw)
         extension_lib = ffiplatform.get_extension(sourcepath_lib, modulename_lib, **kw)
