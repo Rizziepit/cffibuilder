@@ -1,5 +1,5 @@
 import sys
-from . import builder, model
+from . import model, error
 
 
 COMMON_TYPES = {
@@ -31,7 +31,7 @@ def resolve_common_type(commontype):
             result = model.PrimitiveType(result)
         else:
             if commontype == result:
-                raise builder.BuilderError("Unsupported type: %r.  Please file a bug "
+                raise error.FFIError("Unsupported type: %r.  Please file a bug "
                                    "if you think it should be." % (commontype,))
             result = resolve_common_type(result)   # recursively
         assert isinstance(result, model.BaseTypeByIdentity)

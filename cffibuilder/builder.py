@@ -1,20 +1,7 @@
-import imp, os, shutil, sys
+import imp, os, pickle, shutil, sys
 
 from . import ffiplatform
 from .lock import allocate_lock
-
-
-class BuilderError(Exception):
-    pass
-
-
-class CDefError(Exception):
-    def __str__(self):
-        try:
-            line = 'line %d: ' % (self.args[1].coord.line,)
-        except (AttributeError, TypeError, IndexError):
-            line = ''
-        return '%s%s' % (line, self.args[0])
 
 
 class Builder(object):
@@ -59,12 +46,23 @@ class Builder(object):
         from .genengine_cpy import GenCPythonEngine
         engine = GenCPythonEngine(modulename_lib, sourcepath_lib, source, self._parser)
         engine.write_source_to_f()
+        # store the parser
+        self._write_parser(self._parser, modulename, srcdir)
         # copy some Python code
-        for filename in ('api.py', 'lock.py', 'model.py'):
+        for filename in ('api.py', 'lock.py', 'model.py', 'cparser.py',
+                         'commontypes.py', 'error.py'):
             shutil.copy(os.path.join(os.path.dirname(__file__), filename), srcdir)
         # write code to put ffi object and lib at top level
         with open(os.path.join(srcdir, '__init__.py'), 'w') as f:
             f.write(module_init % modulename)
+
+    def _write_parser(self, parser, modulename, srcdir):
+        datadir = os.path.join(srcdir, 'data/')
+        _ensure_dir(datadir)
+        with open(os.path.join(datadir, 'parser.dat'), 'w') as f:
+            picklestr = pickle.dumps(parser, 0)
+            picklestr = picklestr.replace('cffibuilder', modulename)
+            f.write(picklestr)
 
     def _verify(self, modulename, srcdir, tmpdir=None, **kwargs):
         # figure out some file paths
@@ -115,10 +113,18 @@ def _get_c_dir():
 
 
 module_init = '''
+import os, pickle
+
 import %s_lib as lib
 from api import FFI
 
-ffi = FFI()
+
+_parserfile = os.path.join(os.path.abspath(os.path.dirname(__file__)),
+                           'data/parser.dat')
+with open(_parserfile) as f:
+    _parserstr = f.read()
+ffi = FFI(parser=pickle.loads(_parserstr))
+
 
 __all__ = ['lib', 'ffi']
 '''
