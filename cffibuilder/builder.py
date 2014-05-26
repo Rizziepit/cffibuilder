@@ -50,7 +50,7 @@ class Builder(object):
         self._write_parser(self._parser, modulename, srcdir)
         # copy some Python code
         for filename in ('api.py', 'lock.py', 'model.py', 'cparser.py',
-                         'commontypes.py', 'error.py'):
+                         'commontypes.py', 'error.py', 'gc_weakref.py'):
             shutil.copy(os.path.join(os.path.dirname(__file__), filename), srcdir)
         # write code to put ffi object and lib at top level
         with open(os.path.join(srcdir, '__init__.py'), 'w') as f:

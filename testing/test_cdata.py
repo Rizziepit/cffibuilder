@@ -1,5 +1,5 @@
-import py
-from cffibuilder.api import FFI
+from testing.utils import build_ffi
+
 
 class FakeBackend(object):
 
@@ -31,7 +31,7 @@ class FakeType(object):
 
 
 def test_typeof():
-    ffi = FFI(backend=FakeBackend())
+    ffi = build_ffi(FakeBackend())
     clong = ffi.typeof("signed long int")
     assert isinstance(clong, FakeType)
     assert clong.cdecl == 'primitive long'
