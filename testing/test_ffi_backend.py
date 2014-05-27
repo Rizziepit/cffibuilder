@@ -1,7 +1,8 @@
 import py, sys, platform
 import pytest
+from cffibuilder import Builder
 from testing import backend_tests, test_function, test_ownlib
-from cffibuilder.api import FFI
+from testing.utils import build_ffi, build_module, ffi_from_module
 import _cffi_backend
 
 
@@ -15,22 +16,21 @@ class TestFFI(backend_tests.BackendTests,
         return _cffi_backend
 
     def test_not_supported_bitfield_in_result(self):
-        ffi = FFI(backend=self.Backend())
-        ffi.cdef("struct foo_s { int a,b,c,d,e; int x:1; };")
+        ffi = build_ffi(self.Backend(), cdef="struct foo_s { int a,b,c,d,e; int x:1; };")
         e = py.test.raises(NotImplementedError, ffi.callback,
                            "struct foo_s foo(void)", lambda: 42)
         assert str(e.value) == ("<struct foo_s(*)(void)>: "
             "cannot pass as argument or return value a struct with bit fields")
 
     def test_inspecttype(self):
-        ffi = FFI(backend=self.Backend())
+        ffi = build_ffi(self.Backend())
         assert ffi.typeof("long").kind == "primitive"
         assert ffi.typeof("long(*)(long, long**, ...)").cname == (
             "long(*)(long, long * *, ...)")
         assert ffi.typeof("long(*)(long, long**, ...)").ellipsis is True
 
     def test_new_handle(self):
-        ffi = FFI(backend=self.Backend())
+        ffi = build_ffi(self.Backend())
         o = [2, 3, 4]
         p = ffi.new_handle(o)
         assert ffi.typeof(p) == ffi.typeof("void *")
@@ -44,33 +44,33 @@ class TestBitfield:
         # NOTE: 'expected_*' is the numbers expected from GCC.
         # The numbers expected from MSVC are not explicitly written
         # in this file, and will just be taken from the compiler.
-        ffi = FFI()
-        ffi.cdef("struct s1 { %s };" % source)
+        ffi = build_ffi(None, cdef="struct s1 { %s };" % source)
         ctype = ffi.typeof("struct s1")
-        # verify the information with gcc
-        ffi1 = FFI()
-        ffi1.cdef("""
-            static const int Gofs_y, Galign, Gsize;
-            struct s1 *try_with_value(int fieldnum, long long value);
-        """)
         fnames = [name for name, cfield in ctype.fields
                        if name and cfield.bitsize > 0]
         setters = ['case %d: s.%s = value; break;' % iname
                    for iname in enumerate(fnames)]
-        lib = ffi1.verify("""
-            struct s1 { %s };
-            struct sa { char a; struct s1 b; };
-            #define Gofs_y  offsetof(struct s1, y)
-            #define Galign  offsetof(struct sa, b)
-            #define Gsize   sizeof(struct s1)
-            struct s1 *try_with_value(int fieldnum, long long value)
-            {
-                static struct s1 s;
-                memset(&s, 0, sizeof(s));
-                switch (fieldnum) { %s }
-                return &s;
-            }
-        """ % (source, ' '.join(setters)))
+        # verify the information with gcc
+        module = build_module('lib',
+            cdef="""
+                static const int Gofs_y, Galign, Gsize;
+                struct s1 *try_with_value(int fieldnum, long long value);
+            """,
+            source="""
+                struct s1 { %s };
+                struct sa { char a; struct s1 b; };
+                #define Gofs_y  offsetof(struct s1, y)
+                #define Galign  offsetof(struct sa, b)
+                #define Gsize   sizeof(struct s1)
+                struct s1 *try_with_value(int fieldnum, long long value)
+                {
+                    static struct s1 s;
+                    memset(&s, 0, sizeof(s));
+                    switch (fieldnum) { %s }
+                    return &s;
+                }
+            """ % (source, ' '.join(setters)))
+        lib = module.lib
         if sys.platform == 'win32':
             expected_ofs_y = lib.Gofs_y
             expected_align = lib.Galign
@@ -124,7 +124,7 @@ class TestBitfield:
 
     @pytest.mark.skipif("platform.machine().startswith('arm')")
     def test_bitfield_anonymous_no_align(self):
-        L = FFI().alignof("long long")
+        L = build_ffi(None).alignof("long long")
         self.check("char y; int :1;", 0, 1, 2)
         self.check("char x; int z:1; char y;", 2, 4, 4)
         self.check("char x; int  :1; char y;", 2, 1, 3)
@@ -137,7 +137,7 @@ class TestBitfield:
 
     @pytest.mark.skipif("not platform.machine().startswith('arm')")
     def test_bitfield_anonymous_align_arm(self):
-        L = FFI().alignof("long long")
+        L = build_ffi(None).alignof("long long")
         self.check("char y; int :1;", 0, 4, 4)
         self.check("char x; int z:1; char y;", 2, 4, 4)
         self.check("char x; int  :1; char y;", 2, 4, 4)
@@ -150,7 +150,7 @@ class TestBitfield:
 
     @pytest.mark.skipif("platform.machine().startswith('arm')")
     def test_bitfield_zero(self):
-        L = FFI().alignof("long long")
+        L = build_ffi(None).alignof("long long")
         self.check("char y; int :0;", 0, 1, 4)
         self.check("char x; int :0; char y;", 4, 1, 5)
         self.check("char x; int :0; int :0; char y;", 4, 1, 5)
@@ -161,7 +161,7 @@ class TestBitfield:
 
     @pytest.mark.skipif("not platform.machine().startswith('arm')")
     def test_bitfield_zero_arm(self):
-        L = FFI().alignof("long long")
+        L = build_ffi(None).alignof("long long")
         self.check("char y; int :0;", 0, 4, 4)
         self.check("char x; int :0; char y;", 4, 4, 8)
         self.check("char x; int :0; int :0; char y;", 4, 4, 8)
@@ -171,23 +171,22 @@ class TestBitfield:
         self.check("int a:1; int :0; int b:1; char y;", 5, 4, 8)
 
     def test_error_cases(self):
-        ffi = FFI()
+        builder = Builder()
+        ffi = build_ffi(None, builder._parser)
         py.test.raises(TypeError,
-            'ffi.cdef("struct s1 { float x:1; };"); ffi.new("struct s1 *")')
+            'builder.cdef("struct s1 { float x:1; };"); ffi.new("struct s1 *")')
         py.test.raises(TypeError,
-            'ffi.cdef("struct s2 { char x:0; };"); ffi.new("struct s2 *")')
+            'builder.cdef("struct s2 { char x:0; };"); ffi.new("struct s2 *")')
         py.test.raises(TypeError,
-            'ffi.cdef("struct s3 { char x:9; };"); ffi.new("struct s3 *")')
+            'builder.cdef("struct s3 { char x:9; };"); ffi.new("struct s3 *")')
 
     def test_struct_with_typedef(self):
-        ffi = FFI()
-        ffi.cdef("typedef struct { float x; } foo_t;")
+        ffi = build_ffi(None, cdef="typedef struct { float x; } foo_t;")
         p = ffi.new("foo_t *", [5.2])
         assert repr(p).startswith("<cdata 'foo_t *' ")
 
     def test_struct_array_no_length(self):
-        ffi = FFI()
-        ffi.cdef("struct foo_s { int x; int a[]; };")
+        ffi = build_ffi(None, cdef="struct foo_s { int x; int a[]; };")
         p = ffi.new("struct foo_s *", [100, [200, 300, 400]])
         assert p.x == 100
         assert ffi.typeof(p.a) is ffi.typeof("int *")   # no length available
@@ -197,12 +196,11 @@ class TestBitfield:
 
     @pytest.mark.skipif("sys.platform != 'win32'")
     def test_getwinerror(self):
-        ffi = FFI()
+        ffi = build_ffi(None, cdef="void SetLastError(int);")
         code, message = ffi.getwinerror(1155)
         assert code == 1155
         assert message == ("No application is associated with the "
                            "specified file for this operation")
-        ffi.cdef("void SetLastError(int);")
         lib = ffi.dlopen("Kernel32.dll")
         lib.SetLastError(2)
         code, message = ffi.getwinerror()

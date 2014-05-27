@@ -85,6 +85,14 @@ class Builder(object):
         extension_lib = ffiplatform.get_extension(sourcepath_lib, modulename_lib, **kw)
         for extension, modname in ((extension_ffi, modulename_ffi),
                                    (extension_lib, modulename_lib)):
+            # don't replace an existing _cffi_backend module
+            # this is for testing
+            if extension == extension_ffi:
+                try:
+                    import _cffi_backend
+                    continue
+                except ImportError:
+                    pass
             outputpath = ffiplatform.compile(tmpdir, extension)
             self._load_library(outputpath, modname)
         # import the top level module

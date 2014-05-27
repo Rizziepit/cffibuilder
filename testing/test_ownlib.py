@@ -1,7 +1,7 @@
 import py, sys
 import subprocess, weakref
-from cffibuilder.api import FFI
 from cffibuilder.backend_ctypes import CTypesBackend
+from testing.utils import build_ffi
 
 
 SOURCE = """\
@@ -35,8 +35,7 @@ class TestOwnLib(object):
     def test_getting_errno(self):
         if sys.platform == 'win32':
             py.test.skip("fix the auto-generation of the tiny test lib")
-        ffi = FFI(backend=self.Backend())
-        ffi.cdef("""
+        ffi = build_ffi(self.Backend(), cdef="""
             int test_getting_errno(void);
         """)
         ownlib = ffi.dlopen(self.module)
@@ -49,8 +48,7 @@ class TestOwnLib(object):
             py.test.skip("fix the auto-generation of the tiny test lib")
         if self.Backend is CTypesBackend and '__pypy__' in sys.modules:
             py.test.skip("XXX errno issue with ctypes on pypy?")
-        ffi = FFI(backend=self.Backend())
-        ffi.cdef("""
+        ffi = build_ffi(self.Backend(), cdef="""
             int test_setting_errno(void);
         """)
         ownlib = ffi.dlopen(self.module)
@@ -62,8 +60,7 @@ class TestOwnLib(object):
     def test_my_array_7(self):
         if sys.platform == 'win32':
             py.test.skip("fix the auto-generation of the tiny test lib")
-        ffi = FFI(backend=self.Backend())
-        ffi.cdef("""
+        ffi = build_ffi(self.Backend(), cdef="""
             int my_array[7];
         """)
         ownlib = ffi.dlopen(self.module)
@@ -84,8 +81,7 @@ class TestOwnLib(object):
             py.test.skip("fix the auto-generation of the tiny test lib")
         if self.Backend is CTypesBackend:
             py.test.skip("not supported by the ctypes backend")
-        ffi = FFI(backend=self.Backend())
-        ffi.cdef("""
+        ffi = build_ffi(self.Backend(), cdef="""
             int my_array[];
         """)
         ownlib = ffi.dlopen(self.module)
@@ -102,8 +98,7 @@ class TestOwnLib(object):
     def test_keepalive_lib(self):
         if sys.platform == 'win32':
             py.test.skip("fix the auto-generation of the tiny test lib")
-        ffi = FFI(backend=self.Backend())
-        ffi.cdef("""
+        ffi = build_ffi(self.Backend(), cdef="""
             int test_getting_errno(void);
         """)
         ownlib = ffi.dlopen(self.module)
@@ -120,8 +115,7 @@ class TestOwnLib(object):
     def test_keepalive_ffi(self):
         if sys.platform == 'win32':
             py.test.skip("fix the auto-generation of the tiny test lib")
-        ffi = FFI(backend=self.Backend())
-        ffi.cdef("""
+        ffi = build_ffi(self.Backend(), cdef="""
             int test_getting_errno(void);
         """)
         ownlib = ffi.dlopen(self.module)
