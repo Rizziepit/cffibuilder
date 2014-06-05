@@ -1,19 +1,11 @@
 import types
 from .lock import allocate_lock
-
-
-class CDefError(Exception):
-    def __str__(self):
-        try:
-            line = 'line %d: ' % (self.args[1].coord.line,)
-        except (AttributeError, TypeError, IndexError):
-            line = ''
-        return '%s%s' % (line, self.args[0])
+from .error import CDefError
 
 
 class FFI(object):
 
-    def __init__(self, backend=None):
+    def __init__(self, parser, backend=None):
         """Create an FFI instance.  The 'backend' argument is used to
         select a non-default backend, mostly for tests.
         """
@@ -27,6 +19,7 @@ class FFI(object):
         self._backend = backend
         self._lock = allocate_lock()
         self._cached_btypes = {}
+        self._parser = parser
         self._parsed_types = types.ModuleType('parsed_types').__dict__
         if hasattr(backend, 'set_ffi'):
             backend.set_ffi(self)

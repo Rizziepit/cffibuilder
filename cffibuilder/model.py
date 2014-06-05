@@ -1,6 +1,7 @@
 import types
 import weakref
 
+from . import error
 from .lock import allocate_lock
 
 
@@ -150,9 +151,8 @@ class RawFunctionType(BaseFunctionType):
     is_raw_function = True
 
     def build_backend_type(self, ffi, finishlist):
-        from . import api
-        raise api.CDefError("cannot render the type %r: it is a function "
-                            "type, not a pointer-to-function type" % (self,))
+        raise error.CDefError("cannot render the type %r: it is a function "
+                              "type, not a pointer-to-function type" % (self,))
 
     def as_function_pointer(self):
         return FunctionPtrType(self.args, self.result, self.ellipsis)
