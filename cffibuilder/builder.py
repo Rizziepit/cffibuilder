@@ -1,4 +1,4 @@
-import imp, os, pickle, shutil, sys
+import imp, os, pickle, sys
 
 from . import ffiplatform
 from .lock import allocate_lock
@@ -47,10 +47,9 @@ class Builder(object):
             self._verify(modulename, srcdir, tmpdir, **kwargs)
 
     def _generate_code(self, modulename, srcdir, source):
-        # copy all the C
+        # create the C dir
         srcdir_c = os.path.join(srcdir, 'c/')
-        shutil.rmtree(srcdir_c, True)
-        shutil.copytree(_get_c_dir(), srcdir_c)
+        _ensure_dir(srcdir_c)
         # generate library C extension code
         modulename_lib = '%s_lib' % modulename
         sourcepath_lib = os.path.join(srcdir_c, '%s_lib.c' % modulename)
@@ -59,10 +58,6 @@ class Builder(object):
         engine.write_source_to_f()
         # store the parser
         self._write_parser(self._parser, modulename, srcdir)
-        # copy some Python code
-        for filename in ('api.py', 'lock.py', 'model.py', 'cparser.py',
-                         'commontypes.py', 'error.py', 'gc_weakref.py'):
-            shutil.copy(os.path.join(os.path.dirname(__file__), filename), srcdir)
         # write code to put ffi object and lib at top level
         with open(os.path.join(srcdir, '__init__.py'), 'w') as f:
             f.write(module_init % modulename)
@@ -71,8 +66,7 @@ class Builder(object):
         datadir = os.path.join(srcdir, 'data/')
         _ensure_dir(datadir)
         with open(os.path.join(datadir, 'parser.dat'), 'w') as f:
-            picklestr = pickle.dumps(parser, 0)
-            picklestr = picklestr.replace('cffibuilder', modulename)
+            picklestr = pickle.dumps(parser)
             f.write(picklestr)
 
     def _verify(self, modulename, srcdir, tmpdir=None, **kwargs):
@@ -80,32 +74,13 @@ class Builder(object):
         if tmpdir is None:
             tmpdir = os.path.join(srcdir, '../__pycache__/')
         _ensure_dir(tmpdir)
+        # create Extension object and compile module
         modulename_lib = '%s_lib' % modulename
         sourcepath_lib = os.path.join(srcdir, 'c/%s_lib.c' % modulename)
         sourcepath_lib = ffiplatform.maybe_relative_path(sourcepath_lib)
-        modulename_ffi = '_cffi_backend'
-        sourcepath_ffi = os.path.join(srcdir, 'c/_cffi_backend.c')
-        sourcepath_ffi = ffiplatform.maybe_relative_path(sourcepath_ffi)
-        # update compiler args with libraries and dirs to compile _cffi_backend
-        kw = kwargs.copy()
-        kw['include_dirs'] = ['/usr/include/ffi', '/usr/include/libffi'] \
-                             + kwargs.get('include_dirs', [])
-        kw['libraries'] = ['ffi'] + kwargs.get('libraries', [])
-        # compile and load the 2 extension modules
-        extension_ffi = ffiplatform.get_extension(sourcepath_ffi, modulename_ffi, **kw)
-        extension_lib = ffiplatform.get_extension(sourcepath_lib, modulename_lib, **kw)
-        for extension, modname in ((extension_ffi, modulename_ffi),
-                                   (extension_lib, modulename_lib)):
-            # don't replace an existing _cffi_backend module
-            # this is for testing
-            if extension == extension_ffi:
-                try:
-                    import _cffi_backend
-                    continue
-                except ImportError:
-                    pass
-            outputpath = ffiplatform.compile(tmpdir, extension)
-            self._load_library(outputpath, modname)
+        extension_lib = ffiplatform.get_extension(sourcepath_lib, modulename_lib, **kwargs)
+        outputpath = ffiplatform.compile(tmpdir, extension_lib)
+        self._load_library(outputpath, modulename_lib)
         # import the top level module
         sys.path.insert(0, os.path.dirname(srcdir.rstrip('/')))
         imp.load_module(modulename, *imp.find_module(modulename))
@@ -126,16 +101,11 @@ def _ensure_dir(filename):
         pass
 
 
-def _get_c_dir():
-    relativedir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'c/')
-    return os.path.abspath(relativedir)
-
-
 module_init = '''
 import os, pickle
 
 import %s_lib as lib
-from api import FFI
+from cffibuilder.api import FFI
 
 
 _parserfile = os.path.join(os.path.abspath(os.path.dirname(__file__)),
