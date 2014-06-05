@@ -150,7 +150,8 @@ class FFILibraryMeta(type):
         revmapping = dict([(value, key)
                            for (key, value) in engine._typesdict.items()])
         lst = [revmapping[i] for i in range(len(revmapping))]
-        self._ctypes_ordered = list(map(ffi._get_cached_btype, lst))
+        with ffi._lock:
+            self._ctypes_ordered = list(map(ffi._get_cached_btype, lst))
         super(FFILibraryMeta, self).__init__(name, bases, attrs)
 
     def _get_declarations(self):
@@ -320,7 +321,8 @@ class FFILibrary(object):
         # the final adjustments, like copying the Python->C wrapper
         # functions from the module to the 'library' object, and setting
         # up the FFILibrary class with properties for the global C variables.
-        FFILibrary._load('loaded', library=self)
+        with ffi._lock:
+            FFILibrary._load('loaded', library=self)
 
 
 lib = FFILibrary()
