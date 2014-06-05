@@ -29,6 +29,17 @@ class Builder(object):
                 os.path.abspath(os.path.dirname(sys._getframe(1).f_code.co_filename)),
                 'build/%s/' % modulename
             )
+        try:
+            # can't use unicode file names with distutils.core.Extension
+            encoding = sys.getfilesystemencoding()
+            if type(modulename) is unicode:
+                modulename = modulename.encode(encoding)
+            if type(srcdir) is unicode:
+                srcdir = srcdir.encode(encoding)
+            if type(tmpdir) is unicode:
+                tmpdir = tmpdir.encode(encoding)
+        except NameError:
+            pass
         _ensure_dir(srcdir)
 
         with self._lock:
