@@ -84,7 +84,8 @@ class Builder(object):
         self._load_library(outputpath, modulename_lib)
         # import the top level module
         sys.path.insert(0, os.path.dirname(srcdir.rstrip('/')))
-        imp.load_module(modulename, *imp.find_module(modulename))
+        packagename = os.path.basename(srcdir.rstrip('/'))
+        imp.load_module(packagename, *imp.find_module(packagename))
 
     def _load_library(self, modulepath, modulename):
         # loads the generated library
