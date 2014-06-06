@@ -43,10 +43,10 @@ class Builder(object):
         _ensure_dir(srcdir)
 
         with self._lock:
-            self._generate_code(modulename, srcdir, source)
+            self._generate_code(modulename, srcdir, source, **kwargs)
             self._verify(modulename, srcdir, tmpdir, **kwargs)
 
-    def _generate_code(self, modulename, srcdir, source):
+    def _generate_code(self, modulename, srcdir, source, **kwargs):
         # create the C dir
         srcdir_c = os.path.join(srcdir, 'c/')
         _ensure_dir(srcdir_c)
@@ -60,7 +60,12 @@ class Builder(object):
         self._write_parser(self._parser, modulename, srcdir)
         # write code to put ffi object and lib at top level
         with open(os.path.join(srcdir, '__init__.py'), 'w') as f:
-            f.write(module_init % modulename)
+            f.write(module_init % {
+                'modulename': modulename,
+                'include_dirs': kwargs.get('include_dirs', []),
+                'libraries': kwargs.get('libraries', []),
+                'sources': [sourcepath_lib],
+            })
             f.write(library_init)
 
     def _write_parser(self, parser, modulename, srcdir):
@@ -106,7 +111,7 @@ def _ensure_dir(filename):
 module_init = '''
 import os, pickle
 
-import %s_lib as _libmodule
+import %(modulename)s_lib as _libmodule
 from cffibuilder.api import FFI
 
 
@@ -121,6 +126,16 @@ with open(_parserfile) as f:
 
 
 ffi = FFI(parser=_parser)
+
+
+def get_extension():
+    from distutils.core import Extension
+    return Extension(
+        '%(modulename)s_lib',
+        include_dirs=%(include_dirs)r,
+        libraries=%(libraries)r,
+        sources=%(sources)r,
+    )
 '''
 
 library_init = '''
