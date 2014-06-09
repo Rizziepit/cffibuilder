@@ -239,7 +239,7 @@ static PyMappingMethods mb_as_mapping = {
 
 static PyTypeObject MiniBuffer_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    "_cffi_backend.buffer",
+    CFFI_MODULENAME".buffer",
     sizeof(MiniBufferObj),
     0,
     (destructor)mb_dealloc,                     /* tp_dealloc */
