@@ -46,10 +46,10 @@ builder.build(
     }
 """)
 
-from _sdl import ffi, lib
-print ffi.new('Uint8 *')
-print lib._pygame_SDL_BUTTON
-print lib.SDL_FALSE
-print lib.SDL_TRUE
-print lib.SDL_GL_RED_SIZE
-print dir(lib)
+from build._sdl import ffi, lib
+print(ffi.new('Uint8 *'))
+print(lib._pygame_SDL_BUTTON)
+print(lib.SDL_FALSE)
+print(lib.SDL_TRUE)
+print(lib.SDL_GL_RED_SIZE)
+print(dir(lib))

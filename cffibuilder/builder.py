@@ -1,4 +1,4 @@
-import imp, os, pickle, sys
+import imp, os, pickle, shutil, sys
 
 from . import ffiplatform
 from .lock import allocate_lock
@@ -27,7 +27,7 @@ class Builder(object):
         if srcdir is None:
             srcdir = os.path.join(
                 os.path.abspath(os.path.dirname(sys._getframe(1).f_code.co_filename)),
-                'build/%s/' % modulename
+                'build/'
             )
         try:
             # can't use unicode file names with distutils.core.Extension
@@ -40,17 +40,28 @@ class Builder(object):
                 tmpdir = tmpdir.encode(encoding)
         except NameError:
             pass
-        _ensure_dir(srcdir)
+        srcdir_module = os.path.join(srcdir, '%s/' % modulename)
+        _ensure_dir(srcdir_module)
+        # copy C header files to build folder
+        srcdir_c = os.path.join(srcdir, 'c/')
+        shutil.rmtree(srcdir_c, True)
+        shutil.copytree(_get_c_dir(), srcdir_c)
+        # write build package init
+        with open(os.path.join(srcdir, '__init__.py'), 'w') as f:
+            f.write(build_init)
+        # write original kwargs to file
+        with open(os.path.join(srcdir_module, 'BUILD-ARGS.txt'), 'w') as f:
+            f.write('%r' % kwargs)
 
         with self._lock:
-            self._generate_code(modulename, srcdir, source, **kwargs)
-            self._verify(modulename, srcdir, tmpdir, **kwargs)
+            self._generate_code(modulename, srcdir_module, source, **kwargs)
+            self._verify(modulename, srcdir_module, tmpdir, **kwargs)
 
     def _generate_code(self, modulename, srcdir, source, **kwargs):
-        # create the C dir
+        # create the C source dir
         srcdir_c = os.path.join(srcdir, 'c/')
         _ensure_dir(srcdir_c)
-        # generate library C extension code
+        # generate C extension code
         modulename_lib = '%s_lib' % modulename
         sourcepath_lib = os.path.join(srcdir_c, '%s_lib.c' % modulename)
         from .genengine_cpy import GenCPythonEngine
@@ -58,39 +69,34 @@ class Builder(object):
         engine.write_source_to_f()
         # store the parser
         self._write_parser(self._parser, modulename, srcdir)
-        # write code to put ffi object and lib at top level
+        # write library module init
+        # it puts ffi and lib objects at top level
         with open(os.path.join(srcdir, '__init__.py'), 'w') as f:
-            f.write(module_init % {
-                'modulename': modulename,
-                'include_dirs': kwargs.get('include_dirs', []),
-                'libraries': kwargs.get('libraries', []),
-                'sources': [sourcepath_lib],
-            })
+            f.write(module_init % {'modulename': modulename})
             f.write(library_init)
 
     def _write_parser(self, parser, modulename, srcdir):
         datadir = os.path.join(srcdir, 'data/')
         _ensure_dir(datadir)
-        with open(os.path.join(datadir, 'parser.dat'), 'w') as f:
-            picklestr = pickle.dumps(parser)
-            f.write(picklestr)
+        with open(os.path.join(datadir, 'parser.dat'), 'wb') as f:
+            pickle.dump(parser, f)
 
     def _verify(self, modulename, srcdir, tmpdir=None, **kwargs):
         # figure out some file paths
         if tmpdir is None:
             tmpdir = os.path.join(srcdir, '../__pycache__/')
         _ensure_dir(tmpdir)
-        # create Extension object and compile module
-        modulename_lib = '%s_lib' % modulename
-        sourcepath_lib = os.path.join(srcdir, 'c/%s_lib.c' % modulename)
-        sourcepath_lib = ffiplatform.maybe_relative_path(sourcepath_lib)
-        extension_lib = ffiplatform.get_extension(sourcepath_lib, modulename_lib, **kwargs)
-        outputpath = ffiplatform.compile(tmpdir, extension_lib)
-        self._load_library(outputpath, modulename_lib)
-        # import the top level module
-        sys.path.insert(0, os.path.dirname(srcdir.rstrip('/')))
-        packagename = os.path.basename(srcdir.rstrip('/'))
-        imp.load_module(packagename, *imp.find_module(packagename))
+        # import the build package to use it's get_extensions
+        # function and get the Extension object
+        packagedir = os.path.dirname(srcdir.rstrip('/'))
+        packagename = os.path.basename(packagedir)
+        sys.path.insert(0, os.path.dirname(packagedir))
+        extension = __import__(packagename).get_extensions(modulename)
+        extension = extension[0]
+        # compile the C extension module
+        outputpath = ffiplatform.compile(tmpdir, extension)
+        self._load_library(outputpath, '%s_lib' % modulename)
+        __import__('%s.%s' % (packagename, modulename))
 
     def _load_library(self, modulepath, modulename):
         # loads the generated library
@@ -108,6 +114,46 @@ def _ensure_dir(filename):
         pass
 
 
+def _get_c_dir():
+    relativedir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'c/')
+    return os.path.abspath(relativedir)
+
+
+build_init = '''
+import glob, os
+from distutils.core import Extension
+
+
+libraries = ['ffi']
+include_dirs = ['/usr/include/ffi',
+                '/usr/include/libffi',
+                os.path.join(os.path.dirname(__file__), 'c')]
+
+
+def get_extensions(*module_names):
+    build_folder = os.path.dirname(__file__)
+    extensions = []
+    module_names = set(module_names)
+    for fp in glob.glob('%s/*/BUILD-ARGS.txt' % build_folder):
+        module_name = fp.rsplit('/', 2)[1]
+        if module_names and module_name not in module_names:
+            continue
+        module_dir = os.path.dirname(fp)
+        sources = [os.path.join(module_dir, 'c/%s_lib.c' % module_name)]
+        with open(fp) as f:
+            build_args = f.read()
+            build_args = eval(build_args)
+        build_args.get('libraries', []).extend(libraries)
+        build_args.get('include_dirs', []).extend(include_dirs)
+        extensions.append(Extension(
+            '%s_lib' % module_name,
+            sources=sources,
+            **build_args
+        ))
+    return extensions
+'''
+
+
 module_init = '''
 import os, pickle
 
@@ -121,22 +167,13 @@ __all__ = ['lib', 'ffi']
 # load the serialized parser
 _parserfile = os.path.join(os.path.abspath(os.path.dirname(__file__)),
                            'data/parser.dat')
-with open(_parserfile) as f:
-    _parser = pickle.loads(f.read())
+with open(_parserfile, 'rb') as f:
+    _parser = pickle.load(f)
 
 
-ffi = FFI(parser=_parser)
-
-
-def get_extension():
-    from distutils.core import Extension
-    return Extension(
-        '%(modulename)s_lib',
-        include_dirs=%(include_dirs)r,
-        libraries=%(libraries)r,
-        sources=%(sources)r,
-    )
+ffi = FFI(parser=_parser, backend=_libmodule.ffi)
 '''
+
 
 library_init = '''
 from cffibuilder import ffiplatform, model
