@@ -86,7 +86,7 @@ class Builder(object):
         if tmpdir is None:
             tmpdir = os.path.join(srcdir, '../__pycache__/')
         _ensure_dir(tmpdir)
-        # import the build package to use it's get_extensions
+        # import the build package to use its get_extensions
         # function and get the Extension object
         packagedir = os.path.dirname(srcdir.rstrip('/'))
         packagename = os.path.basename(packagedir)
@@ -143,8 +143,10 @@ def get_extensions(*module_names):
         with open(fp) as f:
             build_args = f.read()
             build_args = eval(build_args)
-        build_args.get('libraries', []).extend(libraries)
-        build_args.get('include_dirs', []).extend(include_dirs)
+        build_args.setdefault('libraries', [])
+        build_args.setdefault('include_dirs', [])
+        build_args['libraries'].extend(libraries)
+        build_args['include_dirs'].extend(include_dirs)
         extensions.append(Extension(
             '%s_lib' % module_name,
             sources=sources,
