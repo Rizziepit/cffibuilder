@@ -87,13 +87,18 @@ class Builder(object):
             tmpdir = os.path.join(srcdir, '../__pycache__/')
         _ensure_dir(tmpdir)
         # import the build package to use its get_extensions
-        # function and get the Extension object
+        # function and get the Extension objects
         packagedir = os.path.dirname(srcdir.rstrip('/'))
         packagename = os.path.basename(packagedir)
         sys.path.insert(0, os.path.dirname(packagedir))
-        extension = __import__(packagename).get_extensions(modulename)
-        extension = extension[0]
+        build_package = __import__(packagename)
+        # compile _cffi_backend module if necessary
+        extension_backend = build_package.get_extensions('_cffi_backend')
+        if extension_backend:
+            outputpath = ffiplatform.compile(tmpdir, extension_backend[0])
+            self._load_library(outputpath, '_cffi_backend')
         # compile the C extension module
+        extension = build_package.get_extensions(modulename)[0]
         outputpath = ffiplatform.compile(tmpdir, extension)
         self._load_library(outputpath, '%s_lib' % modulename)
         __import__('%s.%s' % (packagename, modulename))
@@ -120,7 +125,7 @@ def _get_c_dir():
 
 
 build_init = '''
-import glob, os
+import glob, os, sys
 from distutils.core import Extension
 
 
@@ -143,15 +148,21 @@ def get_extensions(*module_names):
         with open(fp) as f:
             build_args = f.read()
             build_args = eval(build_args)
-        build_args.setdefault('libraries', [])
-        build_args.setdefault('include_dirs', [])
-        build_args['libraries'].extend(libraries)
-        build_args['include_dirs'].extend(include_dirs)
         extensions.append(Extension(
             '%s_lib' % module_name,
             sources=sources,
             **build_args
         ))
+
+    if (not module_names or '_cffi_backend' in module_names) and \
+            '__pypy__' not in sys.modules:
+        extensions.append(Extension(
+            name='_cffi_backend',
+            include_dirs=include_dirs,
+            sources=[os.path.join(build_folder, 'c/_cffi_backend.c')],
+            libraries=libraries,
+        ))
+
     return extensions
 '''
 
@@ -173,7 +184,7 @@ with open(_parserfile, 'rb') as f:
     _parser = pickle.load(f)
 
 
-ffi = FFI(parser=_parser, backend=_libmodule.ffi)
+ffi = FFI(parser=_parser)
 '''
 
 
