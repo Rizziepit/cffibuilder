@@ -1,3 +1,5 @@
+import os
+
 from cffibuilder import Builder
 
 
@@ -35,7 +37,8 @@ builder.cdef("""
     Uint8 _pygame_SDL_BUTTON(Uint8 X);
 """)
 builder.build(
-    "_sdl",
+    "_sdl",  # module name
+    srcdir=os.path.abspath(os.path.join(os.path.dirname(__file__), 'generated_pkg/')),
     libraries=['SDL'],
     include_dirs=['/usr/include/SDL', '/usr/local/include/SDL'],
     source="""
@@ -46,10 +49,18 @@ builder.build(
     }
 """)
 
-from build._sdl import ffi, lib
+# Note: builder.build adds generated_pkg to sys.path
+# to verify that the extensions compile and import
+from generated_pkg._sdl import ffi, lib
+
 print(ffi.new('Uint8 *'))
 print(lib._pygame_SDL_BUTTON)
 print(lib.SDL_FALSE)
 print(lib.SDL_TRUE)
 print(lib.SDL_GL_RED_SIZE)
 print(dir(lib))
+
+import generated_pkg
+# use generated_pkg.get_extensions in setup.py to get extension modules
+ext_modules = generated_pkg.get_extensions()
+print("\nEXTENSIONS: %s\n" % ', '.join([e.name for e in ext_modules]))
