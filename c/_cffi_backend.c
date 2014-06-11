@@ -1,7 +1,3 @@
-#ifndef CFFI_MODULENAME
-# define CFFI_MODULENAME "_cffi_backend"
-#endif
-
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 #include "structmember.h"
@@ -213,14 +209,9 @@ static void init_errno(void) { }
 # else
 #  include "misc_thread.h"
 # endif
-# define _cffi_save_errno_only      save_errno
-# define _cffi_restore_errno_only   restore_errno
-#else
-# define _cffi_save_errno_only      save_errno_only
-# define _cffi_restore_errno_only   restore_errno_only
+# define save_errno_only      save_errno
+# define restore_errno_only   restore_errno
 #endif
-#define _cffi_save_errno      save_errno
-#define _cffi_restore_errno   restore_errno
 
 #include "minibuffer.h"
 
@@ -520,7 +511,7 @@ static PyMethodDef ctypedescr_methods[] = {
 
 static PyTypeObject CTypeDescr_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    CFFI_MODULENAME".CTypeDescr",
+    "_cffi_backend.CTypeDescr",
     offsetof(CTypeDescrObject, ct_name),
     sizeof(char),
     (destructor)ctypedescr_dealloc,             /* tp_dealloc */
@@ -562,7 +553,7 @@ get_field_name(CTypeDescrObject *ct, CFieldObject *cf)
         if (d_value == (PyObject *)cf)
             return d_key;
     }
-    Py_FatalError(CFFI_MODULENAME": get_field_name()");
+    Py_FatalError("_cffi_backend: get_field_name()");
     return NULL;
 }
 
@@ -587,7 +578,7 @@ static PyMemberDef cfield_members[] = {
 
 static PyTypeObject CField_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    CFFI_MODULENAME".CField",
+    "_cffi_backend.CField",
     sizeof(CFieldObject),
     0,
     (destructor)cfield_dealloc,                 /* tp_dealloc */
@@ -834,7 +825,7 @@ new_simple_cdata(char *data, CTypeDescrObject *ct)
 static CDataObject *_new_casted_primitive(CTypeDescrObject *ct);  /*forward*/
 
 static PyObject *
-_cffi_from_c_deref(char *data, CTypeDescrObject *ct)
+convert_to_object(char *data, CTypeDescrObject *ct)
 {
     if (!(ct->ct_flags & CT_PRIMITIVE_ANY)) {
         /* non-primitive types (check done just for performance) */
@@ -905,12 +896,12 @@ _cffi_from_c_deref(char *data, CTypeDescrObject *ct)
     }
 
     PyErr_Format(PyExc_SystemError,
-                 "_cffi_from_c_deref: '%s'", ct->ct_name);
+                 "convert_to_object: '%s'", ct->ct_name);
     return NULL;
 }
 
 static PyObject *
-_cffi_from_c_deref_bitfield(char *data, CFieldObject *cf)
+convert_to_object_bitfield(char *data, CFieldObject *cf)
 {
     CTypeDescrObject *ct = cf->cf_type;
     /*READ(data, ct->ct_size)*/
@@ -958,7 +949,7 @@ static int _convert_overflow(PyObject *init, const char *ct_name)
     return -1;
 }
 
-static int _cffi_to_c_char(PyObject *init)
+static int _convert_to_char(PyObject *init)
 {
     if (PyBytes_Check(init) && PyBytes_GET_SIZE(init) == 1) {
         return (unsigned char)(PyBytes_AS_STRING(init)[0]);
@@ -977,7 +968,7 @@ static int _cffi_to_c_char(PyObject *init)
 }
 
 #ifdef HAVE_WCHAR_H
-static wchar_t _cffi_to_c_wchar_t(PyObject *init)
+static wchar_t _convert_to_wchar_t(PyObject *init)
 {
     if (PyUnicode_Check(init)) {
         wchar_t ordinal;
@@ -1016,9 +1007,9 @@ static int _convert_error(PyObject *init, const char *ct_name,
 }
 
 static int    /* forward */
-_cffi_to_c(char *data, CTypeDescrObject *ct, PyObject *init);
+convert_from_object(char *data, CTypeDescrObject *ct, PyObject *init);
 static int    /* forward */
-_cffi_to_c_bitfield(char *data, CFieldObject *cf, PyObject *init);
+convert_from_object_bitfield(char *data, CFieldObject *cf, PyObject *init);
 
 static Py_ssize_t
 get_new_array_length(PyObject **pvalue)
@@ -1054,9 +1045,9 @@ convert_field_from_object(char *data, CFieldObject *cf, PyObject *value)
 {
     data += cf->cf_offset;
     if (cf->cf_bitshift >= 0)
-        return _cffi_to_c_bitfield(data, cf, value);
+        return convert_from_object_bitfield(data, cf, value);
     else
-        return _cffi_to_c(data, cf->cf_type, value);
+        return convert_from_object(data, cf->cf_type, value);
 }
 
 static int
@@ -1099,9 +1090,9 @@ convert_vfield_from_object(char *data, CFieldObject *cf, PyObject *value,
 }
 
 static int
-_cffi_convert_array_from_object(char *data, CTypeDescrObject *ct, PyObject *init)
+convert_array_from_object(char *data, CTypeDescrObject *ct, PyObject *init)
 {
-    /* used by _cffi_to_c(), and also to decode lists/tuples/unicodes
+    /* used by convert_from_object(), and also to decode lists/tuples/unicodes
        passed as function arguments.  'ct' is an CT_ARRAY in the first case
        and a CT_POINTER in the second case. */
     const char *expected;
@@ -1119,7 +1110,7 @@ _cffi_convert_array_from_object(char *data, CTypeDescrObject *ct, PyObject *init
         }
         items = PySequence_Fast_ITEMS(init);
         for (i=0; i<n; i++) {
-            if (_cffi_to_c(data, ctitem, items[i]) < 0)
+            if (convert_from_object(data, ctitem, items[i]) < 0)
                 return -1;
             data += ctitem->ct_size;
         }
@@ -1236,7 +1227,7 @@ convert_struct_from_object(char *data, CTypeDescrObject *ct, PyObject *init,
 }
 
 static int
-_cffi_to_c(char *data, CTypeDescrObject *ct, PyObject *init)
+convert_from_object(char *data, CTypeDescrObject *ct, PyObject *init)
 {
     const char *expected;
     char buf[sizeof(PY_LONG_LONG)];
@@ -1245,7 +1236,7 @@ _cffi_to_c(char *data, CTypeDescrObject *ct, PyObject *init)
         /*WRITE(data, ct->ct_size)*/
 
     if (ct->ct_flags & CT_ARRAY) {
-        return _cffi_convert_array_from_object(data, ct, init);
+        return convert_array_from_object(data, ct, init);
     }
     if (ct->ct_flags & (CT_POINTER|CT_FUNCTIONPTR)) {
         char *ptrdata;
@@ -1324,7 +1315,7 @@ _cffi_to_c(char *data, CTypeDescrObject *ct, PyObject *init)
     }
     if (ct->ct_flags & CT_PRIMITIVE_CHAR) {
         if (ct->ct_size == sizeof(char)) {
-            int res = _cffi_to_c_char(init);
+            int res = _convert_to_char(init);
             if (res < 0)
                 return -1;
             data[0] = res;
@@ -1332,7 +1323,7 @@ _cffi_to_c(char *data, CTypeDescrObject *ct, PyObject *init)
         }
 #ifdef HAVE_WCHAR_H
         else {
-            wchar_t res = _cffi_to_c_wchar_t(init);
+            wchar_t res = _convert_to_wchar_t(init);
             if (res == (wchar_t)-1 && PyErr_Occurred())
                 return -1;
             *(wchar_t *)data = res;
@@ -1351,7 +1342,7 @@ _cffi_to_c(char *data, CTypeDescrObject *ct, PyObject *init)
         return convert_struct_from_object(data, ct, init, NULL);
     }
     PyErr_Format(PyExc_SystemError,
-                 "_cffi_to_c: '%s'", ct->ct_name);
+                 "convert_from_object: '%s'", ct->ct_name);
     return -1;
 
  overflow:
@@ -1362,7 +1353,7 @@ _cffi_to_c(char *data, CTypeDescrObject *ct, PyObject *init)
 }
 
 static int
-_cffi_to_c_bitfield(char *data, CFieldObject *cf, PyObject *init)
+convert_from_object_bitfield(char *data, CFieldObject *cf, PyObject *init)
 {
     CTypeDescrObject *ct = cf->cf_type;
     PY_LONG_LONG fmin, fmax, value = PyLong_AsLongLong(init);
@@ -1552,7 +1543,7 @@ static PyObject *convert_cdata_to_enum_string(CDataObject *cd, int both)
     CTypeDescrObject *ct = cd->c_type;
 
     assert(ct->ct_flags & CT_IS_ENUM);
-    d_key = _cffi_from_c_deref(cd->c_data, ct);
+    d_key = convert_to_object(cd->c_data, ct);
     if (d_key == NULL)
         return NULL;
 
@@ -1596,7 +1587,7 @@ static PyObject *cdata_repr(CDataObject *cd)
             s = PyText_FromString(buffer);
         }
         else {
-            PyObject *o = _cffi_from_c_deref(cd->c_data, cd->c_type);
+            PyObject *o = convert_to_object(cd->c_data, cd->c_type);
             if (o == NULL)
                 return NULL;
             s = PyObject_Repr(o);
@@ -1691,7 +1682,7 @@ static PyObject *cdata_int(CDataObject *cd)
         return PyInt_FromLong(value);
     }
     if (cd->c_type->ct_flags & (CT_PRIMITIVE_SIGNED|CT_PRIMITIVE_UNSIGNED)) {
-        return _cffi_from_c_deref(cd->c_data, cd->c_type);
+        return convert_to_object(cd->c_data, cd->c_type);
     }
     else if (cd->c_type->ct_flags & CT_PRIMITIVE_CHAR) {
         /*READ(cd->c_data, cd->c_type->ct_size)*/
@@ -1981,7 +1972,7 @@ cdata_ass_slice(CDataObject *cd, PySliceObject *slice, PyObject *v)
                              length, i);
             goto error;
         }
-        err = _cffi_to_c(cdata, ct, item);
+        err = convert_from_object(cdata, ct, item);
         Py_DECREF(item);
         if (err < 0)
             goto error;
@@ -2018,7 +2009,7 @@ cdataowning_subscript(CDataObject *cd, PyObject *key)
         return res;
     }
     else {
-        return _cffi_from_c_deref(c, cd->c_type->ct_itemdescr);
+        return convert_to_object(c, cd->c_type->ct_itemdescr);
     }
 }
 
@@ -2034,7 +2025,7 @@ cdata_subscript(CDataObject *cd, PyObject *key)
        negative indexes to be corrected automatically */
     if (c == NULL && PyErr_Occurred())
         return NULL;
-    return _cffi_from_c_deref(c, cd->c_type->ct_itemdescr);
+    return convert_to_object(c, cd->c_type->ct_itemdescr);
 }
 
 static int
@@ -2056,7 +2047,7 @@ cdata_ass_sub(CDataObject *cd, PyObject *key, PyObject *v)
                         "'del x[n]' not supported for cdata objects");
         return -1;
     }
-    return _cffi_to_c(c, ctitem, v);
+    return convert_from_object(c, ctitem, v);
 }
 
 static PyObject *
@@ -2165,12 +2156,12 @@ cdata_getattro(CDataObject *cd, PyObject *attr)
             /* read the field 'cf' */
             char *data = cd->c_data + cf->cf_offset;
             if (cf->cf_bitshift == BS_REGULAR)
-                return _cffi_from_c_deref(data, cf->cf_type);
+                return convert_to_object(data, cf->cf_type);
             else if (cf->cf_bitshift == BS_EMPTY_ARRAY)
                 return new_simple_cdata(data,
                     (CTypeDescrObject *)cf->cf_type->ct_stuff);
             else
-                return _cffi_from_c_deref_bitfield(data, cf);
+                return convert_to_object_bitfield(data, cf);
         }
     }
     return PyObject_GenericGetAttr((PyObject *)cd, attr);
@@ -2203,7 +2194,7 @@ cdata_setattro(CDataObject *cd, PyObject *attr, PyObject *value)
 }
 
 static PyObject *
-_cffi_from_c_struct(char *data, CTypeDescrObject *ct); /*forward*/
+convert_struct_to_owning_object(char *data, CTypeDescrObject *ct); /*forward*/
 
 static cif_description_t *
 fb_prepare_cif(PyObject *fargs, CTypeDescrObject *, ffi_abi);      /*forward*/
@@ -2225,7 +2216,7 @@ static CTypeDescrObject *_get_ct_int(void)
 }
 
 static Py_ssize_t
-_cffi_prepare_pointer_call_argument(CTypeDescrObject *ctptr, PyObject *init,
+_prepare_pointer_call_argument(CTypeDescrObject *ctptr, PyObject *init,
                                char **output_data)
 {
     /* 'ctptr' is here a pointer type 'ITEM *'.  Accept as argument an
@@ -2292,7 +2283,7 @@ _cffi_prepare_pointer_call_argument(CTypeDescrObject *ctptr, PyObject *init,
     return datasize;
 
  convert_default:
-    return _cffi_to_c((char *)output_data, ctptr, init);
+    return convert_from_object((char *)output_data, ctptr, init);
 }
 
 static PyObject*
@@ -2413,7 +2404,7 @@ cdata_call(CDataObject *cd, PyObject *args, PyObject *kwds)
 
         if (argtype->ct_flags & CT_POINTER) {
             char *tmpbuf;
-            Py_ssize_t datasize = _cffi_prepare_pointer_call_argument(
+            Py_ssize_t datasize = _prepare_pointer_call_argument(
                                             argtype, obj, (char **)data);
             if (datasize == 0)
                 ;    /* successfully filled '*data' */
@@ -2423,11 +2414,11 @@ cdata_call(CDataObject *cd, PyObject *args, PyObject *kwds)
                 tmpbuf = alloca(datasize);
                 memset(tmpbuf, 0, datasize);
                 *(char **)data = tmpbuf;
-                if (_cffi_convert_array_from_object(tmpbuf, argtype, obj) < 0)
+                if (convert_array_from_object(tmpbuf, argtype, obj) < 0)
                     goto error;
             }
         }
-        else if (_cffi_to_c(data, argtype, obj) < 0)
+        else if (convert_from_object(data, argtype, obj) < 0)
             goto error;
     }
 
@@ -2435,10 +2426,10 @@ cdata_call(CDataObject *cd, PyObject *args, PyObject *kwds)
     /*READ(cd->c_data, sizeof(void(*)(void)))*/
 
     Py_BEGIN_ALLOW_THREADS
-    _cffi_restore_errno();
+    restore_errno();
     ffi_call(&cif_descr->cif, (void (*)(void))(cd->c_data),
              resultdata, buffer_array);
-    _cffi_save_errno();
+    save_errno();
     Py_END_ALLOW_THREADS
 
     if (fresult->ct_flags & (CT_PRIMITIVE_CHAR | CT_PRIMITIVE_SIGNED |
@@ -2450,17 +2441,17 @@ cdata_call(CDataObject *cd, PyObject *args, PyObject *kwds)
         if (fresult->ct_size < sizeof(ffi_arg))
             resultdata += (sizeof(ffi_arg) - fresult->ct_size);
 #endif
-        res = _cffi_from_c_deref(resultdata, fresult);
+        res = convert_to_object(resultdata, fresult);
     }
     else if (fresult->ct_flags & CT_VOID) {
         res = Py_None;
         Py_INCREF(res);
     }
     else if (fresult->ct_flags & CT_STRUCT) {
-        res = _cffi_from_c_struct(resultdata, fresult);
+        res = convert_struct_to_owning_object(resultdata, fresult);
     }
     else {
-        res = _cffi_from_c_deref(resultdata, fresult);
+        res = convert_to_object(resultdata, fresult);
     }
     /* fall-through */
 
@@ -2525,7 +2516,7 @@ static PyMappingMethods CDataOwn_as_mapping = {
 
 static PyTypeObject CData_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    CFFI_MODULENAME".CData",
+    "_cffi_backend.CData",
     sizeof(CDataObject),
     0,
     (destructor)cdata_dealloc,                  /* tp_dealloc */
@@ -2555,7 +2546,7 @@ static PyTypeObject CData_Type = {
 
 static PyTypeObject CDataOwning_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    CFFI_MODULENAME".CDataOwn",
+    "_cffi_backend.CDataOwn",
     sizeof(CDataObject),
     0,
     (destructor)cdataowning_dealloc,            /* tp_dealloc */
@@ -2589,7 +2580,7 @@ static PyTypeObject CDataOwning_Type = {
 
 static PyTypeObject CDataOwningGC_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    CFFI_MODULENAME".CDataOwnGC",
+    "_cffi_backend.CDataOwnGC",
     sizeof(CDataObject),
     0,
     (destructor)cdataowninggc_dealloc,          /* tp_dealloc */
@@ -2637,7 +2628,7 @@ cdataiter_next(CDataIterObject *it)
     char *result = it->di_next;
     if (result != it->di_stop) {
         it->di_next = result + it->di_itemtype->ct_size;
-        return _cffi_from_c_deref(result, it->di_itemtype);
+        return convert_to_object(result, it->di_itemtype);
     }
     return NULL;
 }
@@ -2651,7 +2642,7 @@ cdataiter_dealloc(CDataIterObject *it)
 
 static PyTypeObject CDataIter_Type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    CFFI_MODULENAME".CDataIter",              /* tp_name */
+    "_cffi_backend.CDataIter",              /* tp_name */
     sizeof(CDataIterObject),                /* tp_basicsize */
     0,                                      /* tp_itemsize */
     /* methods */
@@ -2720,7 +2711,7 @@ static CDataObject *allocate_owning_object(Py_ssize_t size,
 }
 
 static PyObject *
-_cffi_from_c_struct(char *data, CTypeDescrObject *ct)
+convert_struct_to_owning_object(char *data, CTypeDescrObject *ct)
 {
     CDataObject *cd;
     Py_ssize_t dataoffset = offsetof(CDataObject_own_nolength, alignment);
@@ -2829,7 +2820,7 @@ static PyObject *b_newp(PyObject *self, PyObject *args)
 
     memset(cd->c_data, 0, datasize);
     if (init != Py_None) {
-        if (_cffi_to_c(cd->c_data,
+        if (convert_from_object(cd->c_data,
               (ct->ct_flags & CT_POINTER) ? ct->ct_itemdescr : ct, init) < 0) {
             Py_DECREF(cd);
             return NULL;
@@ -2944,7 +2935,7 @@ static CDataObject *cast_to_integer_or_char(CTypeDescrObject *ct, PyObject *ob)
     }
 #endif
     else if (PyBytes_Check(ob)) {
-        int res = _cffi_to_c_char(ob);
+        int res = _convert_to_char(ob);
         if (res < 0)
             return NULL;
         value = (unsigned char)res;
@@ -3019,7 +3010,7 @@ static PyObject *b_cast(PyObject *self, PyObject *args)
 
             if (!(cdsrc->c_type->ct_flags & CT_PRIMITIVE_ANY))
                 goto cannot_cast;
-            io = _cffi_from_c_deref(cdsrc->c_data, cdsrc->c_type);
+            io = convert_to_object(cdsrc->c_data, cdsrc->c_type);
             if (io == NULL)
                 return NULL;
         }
@@ -3165,7 +3156,7 @@ static PyObject *dl_read_variable(DynLibObject *dlobj, PyObject *args)
             return NULL;
         }
     }
-    return _cffi_from_c_deref(data, ct);
+    return convert_to_object(data, ct);
 }
 
 static PyObject *dl_write_variable(DynLibObject *dlobj, PyObject *args)
@@ -3188,7 +3179,7 @@ static PyObject *dl_write_variable(DynLibObject *dlobj, PyObject *args)
                      varname, dlobj->dl_name, error);
         return NULL;
     }
-    if (_cffi_to_c(data, ct, value) < 0)
+    if (convert_from_object(data, ct, value) < 0)
         return NULL;
     Py_INCREF(Py_None);
     return Py_None;
@@ -3203,7 +3194,7 @@ static PyMethodDef dl_methods[] = {
 
 static PyTypeObject dl_type = {
     PyVarObject_HEAD_INIT(NULL, 0)
-    CFFI_MODULENAME".Library",            /* tp_name */
+    "_cffi_backend.Library",            /* tp_name */
     sizeof(DynLibObject),               /* tp_basicsize */
     0,                                  /* tp_itemsize */
     /* methods */
@@ -4359,7 +4350,7 @@ static PyObject *b_new_function_type(PyObject *self, PyObject *args)
     return NULL;
 }
 
-static int _cffi_to_c_fficallback(char *result,
+static int convert_from_object_fficallback(char *result,
                                            CTypeDescrObject *ctype,
                                            PyObject *pyobj)
 {
@@ -4387,9 +4378,9 @@ static int _cffi_to_c_fficallback(char *result,
             */
             /* do a first conversion only to detect overflows.  This
                conversion produces stuff that is otherwise ignored. */
-            if (_cffi_to_c(result, ctype, pyobj) < 0)
+            if (convert_from_object(result, ctype, pyobj) < 0)
                 return -1;
-            /* manual inlining and tweaking of _cffi_to_c()
+            /* manual inlining and tweaking of convert_from_object()
                in order to write a whole 'ffi_arg'. */
             value = _my_PyLong_AsLongLong(pyobj);
             if (value == -1 && PyErr_Occurred())
@@ -4407,7 +4398,7 @@ static int _cffi_to_c_fficallback(char *result,
 #endif
         }
     }
-    return _cffi_to_c(result, ctype, pyobj);
+    return convert_from_object(result, ctype, pyobj);
 }
 
 static void _my_PyErr_WriteUnraisable(PyObject *obj, char *extra_error_line)
@@ -4441,7 +4432,7 @@ static void _my_PyErr_WriteUnraisable(PyObject *obj, char *extra_error_line)
 static void invoke_callback(ffi_cif *cif, void *result, void **args,
                             void *userdata)
 {
-    _cffi_save_errno();
+    save_errno();
     {
 #ifdef WITH_THREAD
     PyGILState_STATE state = PyGILState_Ensure();
@@ -4466,7 +4457,7 @@ static void invoke_callback(ffi_cif *cif, void *result, void **args,
         goto error;
 
     for (i=0; i<n; i++) {
-        PyObject *a = _cffi_from_c_deref(args[i], SIGNATURE(2 + i));
+        PyObject *a = convert_to_object(args[i], SIGNATURE(2 + i));
         if (a == NULL)
             goto error;
         PyTuple_SET_ITEM(py_args, i, a);
@@ -4475,7 +4466,7 @@ static void invoke_callback(ffi_cif *cif, void *result, void **args,
     py_res = PyEval_CallObject(py_ob, py_args);
     if (py_res == NULL)
         goto error;
-    if (_cffi_to_c_fficallback(result, SIGNATURE(1), py_res) < 0) {
+    if (convert_from_object_fficallback(result, SIGNATURE(1), py_res) < 0) {
         extra_error_line = "Trying to convert the result back to C:\n";
         goto error;
     }
@@ -4486,7 +4477,7 @@ static void invoke_callback(ffi_cif *cif, void *result, void **args,
 #ifdef WITH_THREAD
     PyGILState_Release(state);
 #endif
-    _cffi_restore_errno();
+    restore_errno();
     return;
 
  error:
@@ -4537,7 +4528,7 @@ static PyObject *b_callback(PyObject *self, PyObject *args)
         return NULL;
     memset(PyBytes_AS_STRING(py_rawerr), 0, size);
     if (error_ob != Py_None) {
-        if (_cffi_to_c_fficallback(
+        if (convert_from_object_fficallback(
                 PyBytes_AS_STRING(py_rawerr), ctresult, error_ob) < 0) {
             Py_DECREF(py_rawerr);
             return NULL;
@@ -4647,7 +4638,7 @@ static PyObject *b_new_enum_type(PyObject *self, PyObject *args)
                 goto error;
             }
         }
-        if (_cffi_to_c((char*)&lvalue, basetd, value) < 0)
+        if (convert_from_object((char*)&lvalue, basetd, value) < 0)
             goto error;     /* out-of-range or badly typed 'value' */
         if (PyDict_SetItem(dict1, tmpkey, value) < 0)
             goto error;
@@ -4955,7 +4946,7 @@ static PyObject *b_buffer(PyObject *self, PyObject *args)
 static PyObject *b_get_errno(PyObject *self, PyObject *noarg)
 {
     int err;
-    _cffi_restore_errno_only();
+    restore_errno_only();
     err = errno;
     errno = 0;
     return PyInt_FromLong(err);
@@ -4967,7 +4958,7 @@ static PyObject *b_set_errno(PyObject *self, PyObject *args)
     if (!PyArg_ParseTuple(args, "i:set_errno", &i))
         return NULL;
     errno = i;
-    _cffi_save_errno_only();
+    save_errno_only();
     errno = 0;
     Py_INCREF(Py_None);
     return Py_None;
@@ -5312,13 +5303,13 @@ _cffi_to_c_UNSIGNED_FN(unsigned PY_LONG_LONG, 64)
 
 static PyObject *_cffi_from_c_pointer(char *ptr, CTypeDescrObject *ct)
 {
-    return _cffi_from_c_deref((char *)&ptr, ct);
+    return convert_to_object((char *)&ptr, ct);
 }
 
 static char *_cffi_to_c_pointer(PyObject *obj, CTypeDescrObject *ct)
 {
     char *result;
-    if (_cffi_to_c((char *)&result, ct, obj) < 0) {
+    if (convert_from_object((char *)&result, ct, obj) < 0) {
         if ((ct->ct_flags & CT_POINTER) &&
                 (ct->ct_itemdescr->ct_flags & CT_IS_FILE) &&
                 PyFile_Check(obj)) {
@@ -5387,12 +5378,45 @@ static PyObject *_cffi_from_c_wchar_t(wchar_t x) {
 }
 #endif
 
+static void *cffi_exports[] = {
+    0,
+    _cffi_to_c_i8,
+    _cffi_to_c_u8,
+    _cffi_to_c_i16,
+    _cffi_to_c_u16,
+    _cffi_to_c_i32,
+    _cffi_to_c_u32,
+    _cffi_to_c_i64,
+    _cffi_to_c_u64,
+    _convert_to_char,
+    _cffi_from_c_pointer,
+    _cffi_to_c_pointer,
+    _cffi_get_struct_layout,
+    restore_errno,
+    save_errno,
+    _cffi_from_c_char,
+    convert_to_object,
+    convert_from_object,
+    convert_struct_to_owning_object,
+#ifdef HAVE_WCHAR_H
+    _convert_to_wchar_t,
+    _cffi_from_c_wchar_t,
+#else
+    0,
+    0,
+#endif
+    _cffi_to_c_long_double,
+    _cffi_to_c__Bool,
+    _prepare_pointer_call_argument,
+    convert_array_from_object,
+};
+
 /************************************************************/
 
 #if PY_MAJOR_VERSION >= 3
 static struct PyModuleDef FFIBackendModuleDef = {
   PyModuleDef_HEAD_INIT,
-  CFFI_MODULENAME,
+  "_cffi_backend",
   NULL,
   -1,
   FFIBackendMethods,
@@ -5423,7 +5447,7 @@ init_cffi_backend(void)
 #if PY_MAJOR_VERSION >= 3
     m = PyModule_Create(&FFIBackendModuleDef);
 #else
-    m = Py_InitModule(CFFI_MODULENAME, FFIBackendMethods);
+    m = Py_InitModule("_cffi_backend", FFIBackendMethods);
 #endif
 
     if (m == NULL)
@@ -5445,13 +5469,17 @@ init_cffi_backend(void)
     if (PyType_Ready(&MiniBuffer_Type) < 0)
         INITERROR;
 
-    v = PyText_FromString(CFFI_MODULENAME);
+    v = PyText_FromString("_cffi_backend");
     if (v == NULL || PyDict_SetItemString(CData_Type.tp_dict,
                                           "__module__", v) < 0)
         INITERROR;
     v = PyText_FromString("<cdata>");
     if (v == NULL || PyDict_SetItemString(CData_Type.tp_dict,
                                           "__name__", v) < 0)
+        INITERROR;
+
+    v = PyCapsule_New((void *)cffi_exports, "cffi", NULL);
+    if (v == NULL || PyModule_AddObject(m, "_C_API", v) < 0)
         INITERROR;
 
     v = PyText_FromString("0.8.2");

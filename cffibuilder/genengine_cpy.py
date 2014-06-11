@@ -50,12 +50,9 @@ class GenCPythonEngine(object):
         #
         try:
             self._f = open(self._modulepath, 'w')
-            modname = self._modulename
             prnt = self._prnt
-            # include the _cffi_backend code
-            # define the module name first so that _cffi_backend uses it in type definitions
-            prnt('#define CFFI_MODULENAME "%s_ffi"' % modname)
-            prnt('#include "_cffi_backend.h"')
+            # include the _cffi_backend module
+            #prnt('#include "_cffi_backend.h"')
             # paste some standard set of lines that are mostly '#define'
             prnt(cffimod_header)
             prnt()
@@ -83,6 +80,7 @@ class GenCPythonEngine(object):
             prnt()
             #
             # standard init.
+            modname = self._modulename
             constants = self._chained_list_constants[False]
             prnt('#if PY_MAJOR_VERSION >= 3')
             prnt()
@@ -98,14 +96,11 @@ class GenCPythonEngine(object):
             prnt('PyMODINIT_FUNC')
             prnt('PyInit_%s(void)' % modname)
             prnt('{')
-            prnt('  PyObject *lib, *ffi;')
-            prnt('  ffi = PyInit__cffi_backend();')
+            prnt('  PyObject *lib;')
             prnt('  lib = PyModule_Create(&_cffi_module_def);')
             prnt('  if (lib == NULL)')
             prnt('    return NULL;')
-            prnt('  if (ffi == NULL || PyModule_AddObject(lib, "ffi", ffi) < 0)')
-            prnt('    return NULL;')
-            prnt('  if (%s < 0) {' % (constants,))
+            prnt('  if (%s < 0 || _cffi_init() < 0) {' % (constants,))
             prnt('    Py_DECREF(lib);')
             prnt('    return NULL;')
             prnt('  }')
@@ -117,15 +112,11 @@ class GenCPythonEngine(object):
             prnt('PyMODINIT_FUNC')
             prnt('init%s(void)' % modname)
             prnt('{')
-            prnt('  PyObject *lib, *ffi;')
-            prnt('  init_cffi_backend();')
-            prnt('  ffi = PyImport_ImportModule("%s_ffi");' % modname)
+            prnt('  PyObject *lib;')
             prnt('  lib = Py_InitModule("%s", _cffi_methods);' % modname)
             prnt('  if (lib == NULL)')
             prnt('    return;')
-            prnt('  if (ffi == NULL || PyModule_AddObject(lib, "ffi", ffi) < 0)')
-            prnt('    return;')
-            prnt('  if (%s < 0)' % (constants,))
+            prnt('  if (%s < 0 || _cffi_init() < 0)' % (constants,))
             prnt('    return;')
             prnt('  return;')
             prnt('}')
@@ -650,6 +641,59 @@ typedef unsigned char _Bool;
                                          : (type)_cffi_to_c_i64(o)) :    \
      (Py_FatalError("unsupported size for type " #type), 0))
 
+#define _cffi_to_c_i8                                                    \
+                 ((int(*)(PyObject *))_cffi_exports[1])
+#define _cffi_to_c_u8                                                    \
+                 ((int(*)(PyObject *))_cffi_exports[2])
+#define _cffi_to_c_i16                                                   \
+                 ((int(*)(PyObject *))_cffi_exports[3])
+#define _cffi_to_c_u16                                                   \
+                 ((int(*)(PyObject *))_cffi_exports[4])
+#define _cffi_to_c_i32                                                   \
+                 ((int(*)(PyObject *))_cffi_exports[5])
+#define _cffi_to_c_u32                                                   \
+                 ((unsigned int(*)(PyObject *))_cffi_exports[6])
+#define _cffi_to_c_i64                                                   \
+                 ((long long(*)(PyObject *))_cffi_exports[7])
+#define _cffi_to_c_u64                                                   \
+                 ((unsigned long long(*)(PyObject *))_cffi_exports[8])
+#define _cffi_to_c_char                                                  \
+                 ((int(*)(PyObject *))_cffi_exports[9])
+#define _cffi_from_c_pointer                                             \
+    ((PyObject *(*)(char *, CTypeDescrObject *))_cffi_exports[10])
+#define _cffi_to_c_pointer                                               \
+    ((char *(*)(PyObject *, CTypeDescrObject *))_cffi_exports[11])
+#define _cffi_get_struct_layout                                          \
+    ((PyObject *(*)(Py_ssize_t[]))_cffi_exports[12])
+#define _cffi_restore_errno                                              \
+    ((void(*)(void))_cffi_exports[13])
+#define _cffi_save_errno                                                 \
+    ((void(*)(void))_cffi_exports[14])
+#define _cffi_from_c_char                                                \
+    ((PyObject *(*)(char))_cffi_exports[15])
+#define _cffi_from_c_deref                                               \
+    ((PyObject *(*)(char *, CTypeDescrObject *))_cffi_exports[16])
+#define _cffi_to_c                                                       \
+    ((int(*)(char *, CTypeDescrObject *, PyObject *))_cffi_exports[17])
+#define _cffi_from_c_struct                                              \
+    ((PyObject *(*)(char *, CTypeDescrObject *))_cffi_exports[18])
+#define _cffi_to_c_wchar_t                                               \
+    ((wchar_t(*)(PyObject *))_cffi_exports[19])
+#define _cffi_from_c_wchar_t                                             \
+    ((PyObject *(*)(wchar_t))_cffi_exports[20])
+#define _cffi_to_c_long_double                                           \
+    ((long double(*)(PyObject *))_cffi_exports[21])
+#define _cffi_to_c__Bool                                                 \
+    ((_Bool(*)(PyObject *))_cffi_exports[22])
+#define _cffi_prepare_pointer_call_argument                              \
+    ((Py_ssize_t(*)(CTypeDescrObject *, PyObject *, char **))_cffi_exports[23])
+#define _cffi_convert_array_from_object                                  \
+    ((int(*)(char *, CTypeDescrObject *, PyObject *))_cffi_exports[24])
+#define _CFFI_NUM_EXPORTS 25
+
+typedef struct _ctypedescr CTypeDescrObject;
+
+static void *_cffi_exports[_CFFI_NUM_EXPORTS];
 static PyObject *_cffi_types, *_cffi_VerificationError;
 
 static int _cffi_setup_custom(PyObject *lib);   /* forward */
@@ -666,6 +710,34 @@ static PyObject *_cffi_setup(PyObject *self, PyObject *args)
     if (_cffi_setup_custom(library) < 0)
         return NULL;
     return PyBool_FromLong(was_alive);
+}
+
+static int _cffi_init(void)
+{
+    PyObject *module, *c_api_object = NULL;
+
+    module = PyImport_ImportModule("_cffi_backend");
+    if (module == NULL)
+        goto failure;
+
+    c_api_object = PyObject_GetAttrString(module, "_C_API");
+    if (c_api_object == NULL)
+        goto failure;
+    if (!PyCapsule_CheckExact(c_api_object)) {
+        PyErr_SetNone(PyExc_ImportError);
+        goto failure;
+    }
+    memcpy(_cffi_exports, PyCapsule_GetPointer(c_api_object, "cffi"),
+           _CFFI_NUM_EXPORTS * sizeof(void *));
+
+    Py_DECREF(module);
+    Py_DECREF(c_api_object);
+    return 0;
+
+  failure:
+    Py_XDECREF(module);
+    Py_XDECREF(c_api_object);
+    return -1;
 }
 
 #define _cffi_type(num) ((CTypeDescrObject *)PyList_GET_ITEM(_cffi_types, num))
