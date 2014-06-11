@@ -135,6 +135,10 @@ include_dirs = ['/usr/include/ffi',
                 os.path.join(os.path.dirname(__file__), 'c')]
 
 
+# TODO: compile libffi on Windows
+# TODO: use pkg-config
+
+
 def get_extensions(*module_names):
     build_folder = os.path.dirname(__file__)
     extensions = []
