@@ -39,6 +39,32 @@ def resolve_common_type(commontype):
         return result
 
 
+def ordered_identifiers(identifiers):
+    # reduce synonyms to a single chosen combination
+    names = list(identifiers)
+    if names != ['signed', 'char']:    # keep this unmodified
+        prefixes = {}
+        while names:
+            name = names[0]
+            if name in ('short', 'long', 'signed', 'unsigned'):
+                prefixes[name] = prefixes.get(name, 0) + 1
+                del names[0]
+            else:
+                break
+        # ignore the 'signed' prefix below, and reorder the others
+        newnames = []
+        for prefix in ('unsigned', 'short', 'long'):
+            for i in range(prefixes.get(prefix, 0)):
+                newnames.append(prefix)
+        if not names:
+            names = ['int']    # implicitly
+        if names == ['int']:   # but kill it if 'short' or 'long'
+            if 'short' in prefixes or 'long' in prefixes:
+                names = []
+        names = newnames + names
+    return names
+
+
 # ____________________________________________________________
 # Windows common types
 
