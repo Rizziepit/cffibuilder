@@ -6,7 +6,8 @@ from .commontypes import resolve_common_type, ordered_identifiers
 
 _r_words = re.compile(r"\w+|\S")
 # assumes space in type declaration was normalized (1 space separating all words)
-_r_array_type = re.compile(r"(.*?) \[ (0?x?[0-9a-f]+u?l?)? ?\]$", re.DOTALL)
+_r_array_type = re.compile(r"(.*?) \[ (0?x?[0-9a-f]+u?l?)? ?\]( \[ (0?x?[0-9a-f]+u?l?)? ?\])*$")
+_r_function_type =re.compile(r"(.*?) (\( \* \) )?\( (.+) \)$")
 
 
 class TypeResolver(object):
@@ -43,7 +44,10 @@ class TypeResolver(object):
                 length = int(match.group(2), 0)
             else:
                 length = None
-            return model.ArrayType(self._get_type(match.group(1)), length)
+            inner_decl = match.group(1)
+            if match.group(3):
+                inner_decl += match.group(3)
+            return model.ArrayType(self._get_type(inner_decl), length)
 
         # parsed types
         try:
@@ -56,7 +60,16 @@ class TypeResolver(object):
         except KeyError:
             pass
 
-        # TODO function type
+        # function type
+        match = _r_function_type.match(typename)
+        if match:
+            result = self._get_type(match.group(1))
+            argtypes = [self._as_func_arg(self._get_type(decl))
+                        for decl in match.group(3).split(' , ')]
+            tp = model.RawFunctionType(tuple(argtypes), result, False)
+            if match.group(2):
+                return tp.as_function_pointer()
+            return tp
 
         # assume a primitive type. reduce synonyms
         # to a single chosen combination
@@ -76,3 +89,11 @@ class TypeResolver(object):
         if const:
             return model.ConstPointerType(type)
         return model.PointerType(type)
+
+    def _as_func_arg(self, type):
+        if isinstance(type, model.ArrayType):
+            return model.PointerType(type.item)
+        elif isinstance(type, model.RawFunctionType):
+            return type.as_function_pointer()
+        else:
+            return type

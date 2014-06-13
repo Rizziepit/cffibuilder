@@ -8,7 +8,7 @@ from __future__ import unicode_literals
 #
 #
 import sys, math
-from testing.utils import build_ffi, build_module
+from testing.utils import build_ffi, build_module, teardown_module
 
 lib_m = "m"
 if sys.platform == 'win32':
@@ -63,7 +63,7 @@ def test_dlopen():
     assert x == math.sin(1.23)
 
 def test_verify():
-    lib = build_module("lib", 
+    lib = build_module(
         cdef="double test_verify_1(double x);",
         source="double test_verify_1(double x) { return x * 42.0; }"
     ).lib   # unicode literal

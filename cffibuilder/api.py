@@ -1,6 +1,7 @@
 import types
 from .lock import allocate_lock
 from .error import CDefError
+from .typeresolver import TypeResolver
 
 
 class FFI(object):
@@ -20,6 +21,7 @@ class FFI(object):
         self._lock = allocate_lock()
         self._cached_btypes = {}
         self._parser = parser
+        self._typeresolver = TypeResolver(parser._declarations)
         self._parsed_types = types.ModuleType('parsed_types').__dict__
         if hasattr(backend, 'set_ffi'):
             backend.set_ffi(self)
@@ -48,7 +50,7 @@ class FFI(object):
         if not isinstance(cdecl, str):    # unicode, on Python 2
             cdecl = cdecl.encode('ascii')
         #
-        type = self._parser.parse_type(cdecl)
+        type = self._typeresolver.resolve(cdecl)
         really_a_function_type = type.is_raw_function
         if really_a_function_type:
             type = type.as_function_pointer()

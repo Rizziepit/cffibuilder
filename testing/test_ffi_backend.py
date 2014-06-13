@@ -2,7 +2,7 @@ import py, sys, platform
 import pytest
 from cffibuilder import Builder
 from testing import backend_tests, test_function, test_ownlib
-from testing.utils import build_ffi, build_module, ffi_from_module
+from testing.utils import build_ffi, build_module, ffi_from_module, teardown_module
 import _cffi_backend
 
 
@@ -51,7 +51,7 @@ class TestBitfield:
         setters = ['case %d: s.%s = value; break;' % iname
                    for iname in enumerate(fnames)]
         # verify the information with gcc
-        module = build_module('lib',
+        module = build_module(
             cdef="""
                 static const int Gofs_y, Galign, Gsize;
                 struct s1 *try_with_value(int fieldnum, long long value);

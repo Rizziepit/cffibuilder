@@ -95,13 +95,21 @@ class Builder(object):
         # compile _cffi_backend module if necessary
         extension_backend = build_package.get_extensions('_cffi_backend')
         if extension_backend:
-            outputpath = ffiplatform.compile(tmpdir, extension_backend[0])
-            self._load_library(outputpath, '_cffi_backend')
+            # only load if the extension isn't installed (for tests)
+            try:
+                import _cffi_backend
+            except ImportError:
+                outputpath = ffiplatform.compile(tmpdir, extension_backend[0])
+                self._load_library(outputpath, '_cffi_backend')
         # compile the C extension module
         extension = build_package.get_extensions(modulename)[0]
         outputpath = ffiplatform.compile(tmpdir, extension)
+        # make sure the latest version of the module is loaded
         self._load_library(outputpath, '%s_lib' % modulename)
-        __import__('%s.%s' % (packagename, modulename))
+        pkginfo = imp.find_module(packagename)
+        modinfo = imp.find_module(modulename, [pkginfo[1]])
+        imp.load_module(modulename, *modinfo)
+        imp.load_module(packagename, *pkginfo)
 
     def _load_library(self, modulepath, modulename):
         # loads the generated library
@@ -158,7 +166,7 @@ def get_extensions(*module_names):
             **build_args
         ))
 
-    if (not module_names or '_cffi_backend' in module_names) and \
+    if (not module_names or '_cffi_backend' in module_names) and \\
             '__pypy__' not in sys.modules:
         extensions.append(Extension(
             name='_cffi_backend',

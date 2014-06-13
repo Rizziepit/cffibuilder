@@ -8,16 +8,25 @@ from cffibuilder.api import FFI
 from cffibuilder.cparser import Parser
 
 
-_module_cache = {}
+_module_names = set()
 
-def build_module(name, cdef, source):
-    module_key = (cdef, name, source)
-    if module_key not in _module_cache:
-        builder = Builder()
-        builder.cdef(cdef)
-        builder.build(name, source=source)
-    module = __import__(name)
-    module = reload(module)
+
+def get_random_str(length=12):
+    import random
+    chars = 'abcdefghijklmnopqrstuvwxyz'
+    return ''.join([random.choice(chars) for i in range(length)])
+
+
+def build_module(cdef, source):
+    name = get_random_str()
+    while name in _module_names:
+        name = get_random_str()
+    _module_names.add(name)
+    builder = Builder()
+    builder.cdef(cdef)
+    builder.build(name, source=source)
+    pkg = __import__('build.%s' % name)
+    module = getattr(pkg, name)
     return module
 
 
@@ -37,3 +46,13 @@ def build_ffi(backend, parser=None, cdef=""):
     elif cdef:
         raise ValueError("Cannot provide both 'parser' and 'cdef' arguments")
     return FFI(parser, backend)
+
+
+def teardown_module(module):
+    import os, shutil
+    for name in _module_names:
+        shutil.rmtree(
+            os.path.join(os.path.dirname(__file__), 'build/%s' % name),
+            True
+        )
+    _module_names.clear()
