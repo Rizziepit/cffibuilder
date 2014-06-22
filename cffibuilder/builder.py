@@ -137,21 +137,26 @@ import glob, os, sys
 from distutils.core import Extension
 
 
-libraries = ['ffi']
-include_dirs = ['/usr/include/ffi',
-                '/usr/include/libffi',
-                os.path.join(os.path.dirname(__file__), 'c')]
-
-
 # TODO: compile libffi on Windows
 # TODO: use pkg-config
 
 
+def get_build_dir():
+    build_dir = os.path.dirname(__file__)
+    # If we're being called from setup.py we need to use paths relative to the
+    # directory containing it.
+    main_file = getattr(sys.modules['__main__'], '__file__', None)
+    if main_file is not None and main_file.endswith('/setup.py'):
+        # It looks like we're being called from setup.py, so all paths must be
+        # relative to that.
+        build_dir = os.path.relpath(build_dir, os.path.dirname(main_file))
+    return build_dir
+
 def get_extensions(*module_names):
-    build_folder = os.path.dirname(__file__)
+    build_dir = get_build_dir()
     extensions = []
     module_names = set(module_names)
-    for fp in glob.glob('%s/*/BUILD-ARGS.txt' % build_folder):
+    for fp in glob.glob('%s/*/BUILD-ARGS.txt' % build_dir):
         module_name = fp.rsplit('/', 2)[1]
         if module_names and module_name not in module_names:
             continue
@@ -170,9 +175,10 @@ def get_extensions(*module_names):
             '__pypy__' not in sys.modules:
         extensions.append(Extension(
             name='_cffi_backend',
-            include_dirs=include_dirs,
-            sources=[os.path.join(build_folder, 'c/_cffi_backend.c')],
-            libraries=libraries,
+            include_dirs=['/usr/include/ffi', '/usr/include/libffi',
+                          os.path.join(build_dir, 'c')],
+            sources=[os.path.join(build_dir, 'c/_cffi_backend.c')],
+            libraries=['ffi'],
         ))
 
     return extensions
