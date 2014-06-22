@@ -64,8 +64,13 @@ class TypeResolver(object):
         match = _r_function_type.match(typename)
         if match:
             result = self._get_type(match.group(1))
-            argtypes = [self._as_func_arg(self._get_type(decl))
-                        for decl in match.group(3).split(' , ')]
+            argtypes = []
+            if match.group(3) != 'void':
+                for decl in match.group(3).split(' , '):
+                    decl_bits = decl.split(' ')
+                    if len(decl_bits) > 1 and decl_bits[-1] != '*':
+                        decl = ' '.join(decl_bits[:-1])
+                    argtypes.append(self._as_func_arg(self._get_type(decl)))
             tp = model.RawFunctionType(tuple(argtypes), result, False)
             if match.group(2):
                 return tp.as_function_pointer()
