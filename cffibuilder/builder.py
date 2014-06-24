@@ -161,10 +161,12 @@ def get_extensions(*module_names):
         if module_names and module_name not in module_names:
             continue
         module_dir = os.path.dirname(fp)
-        sources = [os.path.join(module_dir, 'c/%s_lib.c' % module_name)]
+        our_sources = [os.path.join(module_dir, 'c/%s_lib.c' % module_name)]
         with open(fp) as f:
             build_args = f.read()
             build_args = eval(build_args)
+        sources = build_args.pop('sources', [])
+        sources.extend(our_sources)
         extensions.append(Extension(
             '%s_lib' % module_name,
             sources=sources,
